@@ -1,0 +1,22 @@
+Django>=5.2,<6.0
+djangorestframework>=3.15
+psycopg[binary]>=3.2
+python-dotenv>=1.0
+
+# Phase 2: fingerprinting
+datasketch>=1.6     # MinHash for fuzzy fingerprint similarity
+jellyfish>=1.0      # Metaphone / Soundex for contact-name phonetic hashing
+phonenumbers>=8.13  # E.164 parsing + country-code extraction
+geoip2>=4.8          # MaxMind GeoLite2 MMDB reader (local, no per-lookup cost)
+disposable-email-domains>=0.0.100  # Bundled blocklist for is_disposable detection (no API)
+
+# Production serving
+gunicorn>=22.0
+whitenoise>=6.6  # Static files served by Django process (no separate CDN needed for console)
+
+# Analyzer runtime deps (vendored from SDAT)
+requests>=2.28
+dnspython>=2.4
+python-whois>=0.8
+duckduckgo_search>=7.0
+pandas>=1.5

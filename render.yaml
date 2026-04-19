@@ -1,0 +1,46 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Creates the domain-infra web service with the right env-var shape.
+# Connect your GitHub repo to Render, then on the Blueprint page pick this file.
+# Secrets marked `sync: false` must be filled in manually in the Render dashboard
+# (they can't be committed to git).
+
+services:
+  - type: web
+    name: domain-infra
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter            # $7/mo. Use `free` instead for zero-cost with auto-sleep.
+    healthCheckPath: /admin/login/
+    autoDeploy: true         # redeploy on push to main
+    envVars:
+      # --- Django ---
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: "domain-infra.onrender.com,.onrender.com"
+      - key: DJANGO_LOG_LEVEL
+        value: INFO
+
+      # --- Postgres (Neon) ---
+      - key: POSTGRES_DB
+        sync: false
+      - key: POSTGRES_USER
+        sync: false
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: POSTGRES_HOST
+        sync: false
+      - key: POSTGRES_PORT
+        value: "5432"
+      - key: POSTGRES_SSLMODE
+        value: require
+
+      # --- Enrichment vendors ---
+      - key: IPQS_API_KEY
+        sync: false
+      - key: MAXMIND_LICENSE_KEY
+        sync: false
+      - key: MAXMIND_ACCOUNT_ID
+        sync: false
