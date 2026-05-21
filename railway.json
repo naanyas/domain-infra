@@ -6,8 +6,6 @@
   },
   "deploy": {
     "startCommand": null,
-    "healthcheckPath": "/admin/login/",
-    "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }
