@@ -40,6 +40,9 @@ INSTALLED_APPS = [
     "apps.feedback",
     "apps.risk_profiles",
     "apps.api",
+    "apps.console",
+    "apps.scoring",
+    "apps.iocs",
 ]
 
 MIDDLEWARE = [

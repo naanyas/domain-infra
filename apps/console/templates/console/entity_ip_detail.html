@@ -1,0 +1,215 @@
+{% extends "console/base.html" %}
+{% block title %}IP {{ ip.address }} · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-sm mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <a href="{% url 'console:submissions-list' %}" class="text-brand-600 hover:underline">Submissions</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">IP {{ ip.address }}</span>
+</nav>
+
+<div class="flex items-start justify-between mb-6">
+    <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500">{{ kind_label }}</div>
+        <h1 class="text-3xl font-mono font-semibold">{{ ip.address }}</h1>
+        <div class="text-sm text-slate-500 mt-1">
+            {{ ip.country|default:"—" }} · {{ ip.city|default:"—" }} · {{ ip.asn|default:"—" }}
+        </div>
+    </div>
+    <div>
+        {% if ip.tag == 'good' %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">✓ Tagged GOOD</span>
+        {% elif ip.tag == 'bad' %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-rose-50 text-rose-700 border border-rose-200">✗ Tagged BAD</span>
+        {% elif ip.tag == 'do_not_score' %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-slate-100 text-slate-700 border border-slate-200">◌ Do Not Score</span>
+        {% else %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-slate-50 text-slate-500 border border-slate-200">Untagged</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="grid grid-cols-3 gap-6">
+
+<div class="col-span-2 space-y-6">
+
+    <!-- Tag actions -->
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Investigator tag</h2>
+        <p class="text-sm text-slate-600 mb-3">Manually mark this entity. Tags adjust the baseline score on every future submission involving this IP:
+            <span class="text-emerald-700">good → −30</span>,
+            <span class="text-rose-700">bad → +30</span>,
+            do-not-score → no reputation accrual.</p>
+        {% if ip.tag_reason %}
+        <div class="bg-slate-50 rounded p-3 text-sm text-slate-700 mb-3">
+            <div class="text-xs text-slate-500 uppercase tracking-wider mb-1">Current reason</div>
+            {{ ip.tag_reason }}
+            {% if ip.tagged_by %}<div class="text-xs text-slate-500 mt-1">tagged by {{ ip.tagged_by }} at {{ ip.tagged_at|date:"Y-m-d H:i" }}</div>{% endif %}
+        </div>
+        {% endif %}
+
+        {% with is_shared=ip.is_vpn|default_if_none:False %}
+        {% if ip.is_vpn or ip.is_proxy or ip.is_tor %}
+        <div class="p-3 rounded bg-amber-50 border border-amber-200 text-sm text-amber-900 mb-3">
+            ⚠ <strong>This IP is a {% if ip.is_vpn %}VPN{% endif %}{% if ip.is_proxy %}{% if ip.is_vpn %} / {% endif %}proxy{% endif %}{% if ip.is_tor %}{% if ip.is_vpn or ip.is_proxy %} / {% endif %}Tor exit{% endif %}</strong>.
+            Shared IPs can't be tagged good/bad — many unrelated users share them, so a tag would propagate false reputation.
+            Only <em>Do Not Score</em> and <em>Clear</em> are available.
+        </div>
+        {% endif %}
+        <form method="POST" action="{% url 'console:ip-tag' ip.address %}" class="space-y-3">
+            {% csrf_token %}
+            <textarea name="tag_reason" placeholder="Reason (required for good/bad — e.g., 'my office IP' / 'known botnet')"
+                      class="w-full px-3 py-2 rounded-md border border-slate-300 text-sm" rows="2">{{ ip.tag_reason }}</textarea>
+            <div class="flex gap-2">
+                <button name="tag" value="good" type="submit"
+                        {% if ip.is_vpn or ip.is_proxy or ip.is_tor %}disabled title="Not allowed on VPN/proxy/Tor IPs"{% endif %}
+                        class="flex-1 px-3 py-2 text-sm font-medium rounded-md bg-emerald-600 hover:bg-emerald-700 text-white disabled:bg-slate-300 disabled:cursor-not-allowed">
+                    ✓ Mark GOOD
+                </button>
+                <button name="tag" value="bad" type="submit"
+                        {% if ip.is_vpn or ip.is_proxy or ip.is_tor %}disabled title="Not allowed on VPN/proxy/Tor IPs"{% endif %}
+                        class="flex-1 px-3 py-2 text-sm font-medium rounded-md bg-rose-600 hover:bg-rose-700 text-white disabled:bg-slate-300 disabled:cursor-not-allowed">
+                    ✗ Mark BAD
+                </button>
+                <button name="tag" value="do_not_score" type="submit"
+                        class="flex-1 px-3 py-2 text-sm font-medium rounded-md bg-slate-600 hover:bg-slate-700 text-white">
+                    ◌ Do Not Score
+                </button>
+                <button name="tag" value="" type="submit"
+                        class="px-3 py-2 text-sm font-medium rounded-md bg-white border border-slate-300 hover:bg-slate-50">
+                    Clear tag
+                </button>
+            </div>
+        </form>
+        {% endwith %}
+    </div>
+
+    <!-- Submissions involving this IP -->
+    <div class="bg-white rounded-lg border border-slate-200">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h2 class="text-sm font-medium">Submissions sharing this exact IP</h2>
+            <span class="text-xs text-slate-500">{{ linked_submissions|length }} row{{ linked_submissions|length|pluralize }}</span>
+        </div>
+        <table class="w-full text-sm">
+            <thead class="text-xs text-slate-500 uppercase bg-slate-50">
+                <tr>
+                    <th class="text-left font-medium px-5 py-2">When</th>
+                    <th class="text-left font-medium px-5 py-2">Domain</th>
+                    <th class="text-left font-medium px-5 py-2">Email</th>
+                    <th class="text-left font-medium px-5 py-2">Role</th>
+                    <th class="text-left font-medium px-5 py-2">Verdict</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for row in linked_submissions %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:submission-detail' row.submission.id %}'">
+                    <td class="px-5 py-2 text-slate-500 text-xs whitespace-nowrap">{{ row.submission.created_at|date:"Y-m-d H:i" }}</td>
+                    <td class="px-5 py-2 font-mono text-xs">{{ row.submission.domain|default:"—" }}</td>
+                    <td class="px-5 py-2 text-xs">{{ row.submission.contact_email_raw|default:"—" }}</td>
+                    <td class="px-5 py-2 text-xs text-slate-500">{{ row.role }}</td>
+                    <td class="px-5 py-2 text-xs">
+                        {% if row.submission.verdict %}
+                            {% if row.submission.verdict.decision == 'approve' %}
+                                <span class="text-emerald-700">approve</span>
+                            {% elif row.submission.verdict.decision == 'deny' %}
+                                <span class="text-rose-700">deny</span>
+                            {% else %}
+                                <span class="text-amber-700">review</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-slate-400">{{ row.submission.status }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="5" class="px-5 py-8 text-center text-slate-500 text-sm">No submissions have used this IP yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Close-bys: same /24, same ASN -->
+    {% for group in close_by %}
+    <div class="bg-white rounded-lg border border-slate-200">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h2 class="text-sm font-medium">Close-bys — {{ group.label }}</h2>
+            <span class="text-xs text-slate-500">{{ group.items|length }} IP{{ group.items|length|pluralize }}</span>
+        </div>
+        <div class="divide-y divide-slate-100">
+        {% for item in group.items %}
+            <a href="{{ item.url }}" class="flex items-center justify-between px-5 py-2 text-sm hover:bg-slate-50">
+                <span class="font-mono">
+                    {{ item.value }}
+                    {% if item.tag == 'good' %}<span class="ml-1 text-emerald-700 text-[10px] font-semibold">[GOOD]</span>
+                    {% elif item.tag == 'bad' %}<span class="ml-1 text-rose-700 text-[10px] font-semibold">[BAD]</span>{% endif %}
+                </span>
+                <span class="text-xs text-slate-500">approved={{ item.approved }} · flagged={{ item.flagged }}</span>
+            </a>
+        {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Right column: IP intelligence -->
+<div class="col-span-1 space-y-6">
+
+    {# IPQS fraud score — prominent card #}
+    {% if ip.fraud_score is not None %}
+    <div class="bg-white rounded-lg border-2 {% if ip.fraud_score >= 85 %}border-rose-300{% elif ip.fraud_score >= 75 %}border-amber-300{% else %}border-slate-200{% endif %} p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-2">IPQS fraud score</h2>
+        <div class="flex items-baseline gap-2">
+            <div class="text-4xl font-bold {% if ip.fraud_score >= 85 %}text-rose-600{% elif ip.fraud_score >= 75 %}text-amber-600{% else %}text-emerald-600{% endif %}">
+                {{ ip.fraud_score }}
+            </div>
+            <div class="text-xs text-slate-500">/100</div>
+        </div>
+        <div class="text-[10px] text-slate-500 mt-1">75+ suspicious · 85+ risky · 90+ high risk</div>
+        <div class="mt-3 space-y-1.5 text-xs">
+            <div class="flex justify-between">
+                <span class="text-slate-500">Recent abuse</span>
+                <span class="{% if ip.recent_abuse %}text-rose-600 font-semibold{% else %}text-slate-700{% endif %}">
+                    {% if ip.recent_abuse is None %}—{% elif ip.recent_abuse %}yes{% else %}no{% endif %}
+                </span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-slate-500">Bot activity</span>
+                <span class="{% if ip.bot_status %}text-rose-600 font-semibold{% else %}text-slate-700{% endif %}">
+                    {% if ip.bot_status is None %}—{% elif ip.bot_status %}yes{% else %}no{% endif %}
+                </span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Enrichment</h2>
+        <dl class="text-sm space-y-2">
+            <div class="flex justify-between"><dt class="text-slate-500">Country</dt><dd>{{ ip.country|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">City</dt><dd>{{ ip.city|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Region</dt><dd>{{ ip.region|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">ASN</dt><dd class="font-mono text-xs text-right">{{ ip.asn|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">ISP / Org</dt><dd class="text-xs text-right">{{ ip.hosting_provider|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Timezone</dt><dd class="text-xs">{{ ip.timezone|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Lat / Lng</dt><dd class="font-mono text-xs">{% if ip.latitude %}{{ ip.latitude|floatformat:3 }}, {{ ip.longitude|floatformat:3 }}{% else %}—{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">VPN</dt><dd>{% if ip.is_vpn %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Proxy</dt><dd>{% if ip.is_proxy %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Tor</dt><dd>{% if ip.is_tor %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Datacenter</dt><dd>{% if ip.is_datacenter %}yes{% else %}no{% endif %}</dd></div>
+        </dl>
+    </div>
+
+    <div class="bg-slate-900 text-slate-200 rounded-lg p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-400 mb-3">Reputation</h2>
+        <dl class="text-sm space-y-2">
+            <div class="flex justify-between"><dt class="text-slate-400">Net approved</dt><dd class="text-emerald-400">{{ ip.net_approved_count }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-400">Net flagged</dt><dd class="text-rose-400">{{ ip.net_flagged_count }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-400">First seen</dt><dd class="text-xs">{{ ip.first_seen|date:"Y-m-d" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-400">Last seen</dt><dd class="text-xs">{{ ip.last_seen|date:"Y-m-d" }}</dd></div>
+        </dl>
+    </div>
+</div>
+</div>
+{% endblock %}

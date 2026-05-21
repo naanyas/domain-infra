@@ -32,6 +32,12 @@ class RiskProfile(models.Model):
     # list[{when: {...conditions}, then: {decision, reason_code, summary}}]
     rules = models.JSONField(default=list, blank=True)
 
+    # Custom Scoring Bands — investigator-editable labels/colors for score ranges.
+    # Shape: list[{label, score_start, score_end, color, active, decision}] ordered
+    # from highest-risk to lowest. If empty, the UI falls back to the legacy
+    # approve_max_score / deny_min_score thresholds.
+    scoring_bands = models.JSONField(default=list, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

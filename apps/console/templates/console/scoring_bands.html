@@ -1,0 +1,188 @@
+{% extends "console/base.html" %}
+{% block title %}Scoring bands · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-xs mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">Scoring bands</span>
+</nav>
+
+{% if messages %}
+{% for message in messages %}
+<div class="mb-4 p-3 rounded-md border {% if message.tags == 'success' %}bg-emerald-50 border-emerald-200 text-emerald-900{% elif message.tags == 'error' %}bg-rose-50 border-rose-200 text-rose-900{% else %}bg-slate-50 border-slate-200 text-slate-800{% endif %} text-sm">{{ message }}</div>
+{% endfor %}
+{% endif %}
+
+<div class="mb-5">
+    <h1 class="text-2xl font-semibold">🎚 Custom Risk Scoring Bands</h1>
+    <p class="text-sm text-slate-600 mt-1 max-w-4xl">
+        Configure risk scoring bands with custom labels and score thresholds. Bands map a submission's
+        numeric score (0–100, higher = worse) to an investigator-friendly label and a default decision.
+        The top band (highest scores) should resolve to <strong>deny</strong>; the bottom band should resolve to
+        <strong>approve</strong>. Middle bands typically resolve to <strong>review</strong>. Up to 8 bands supported.
+    </p>
+    <p class="text-xs text-slate-500 mt-2">
+        Changes take effect on new submissions immediately. Historical verdicts are not re-labeled.
+    </p>
+</div>
+
+<form method="POST" id="bands-form" onsubmit="syncBandsJson(); return true;">
+    {% csrf_token %}
+    <input type="hidden" name="bands_json" id="bands-json" value="" />
+
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden mb-4">
+        <table class="w-full text-sm" id="bands-table">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                    <th class="text-left px-4 py-2 w-16">Active</th>
+                    <th class="text-left px-4 py-2">Label</th>
+                    <th class="text-left px-4 py-2 w-28">Start</th>
+                    <th class="text-left px-4 py-2 w-28">End</th>
+                    <th class="text-left px-4 py-2 w-32">Decision</th>
+                    <th class="text-left px-4 py-2 w-32">Color</th>
+                    <th class="text-right px-4 py-2 w-16"></th>
+                </tr>
+            </thead>
+            <tbody id="bands-tbody" class="divide-y divide-slate-100">
+                {# Rows are rendered by JS from initialBands so add/remove/reorder are free. #}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="flex items-center gap-2 mb-4">
+        <button type="button" id="add-band" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs rounded">+ Add band</button>
+        <button type="button" id="reset-defaults" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs rounded">Reset to defaults</button>
+        <div class="flex-1"></div>
+        <a href="{% url 'console:home' %}" class="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">Cancel</a>
+        <button type="submit" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded">Save changes</button>
+    </div>
+
+    <div class="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-600">
+        <strong>Preview</strong> — a submission with score <strong id="preview-score">50</strong> would land in:
+        <span id="preview-band" class="inline-flex items-center gap-1.5 ml-1 px-2 py-0.5 rounded font-semibold">—</span>
+        <input type="range" min="0" max="100" value="50" id="preview-slider" class="ml-3 align-middle w-64" />
+    </div>
+</form>
+
+{{ bands|json_script:"initial-bands" }}
+{{ default_bands|json_script:"default-bands" }}
+
+<script>
+(function () {
+  const tbody = document.getElementById('bands-tbody');
+  const jsonInput = document.getElementById('bands-json');
+  const preview = document.getElementById('preview-band');
+  const previewScore = document.getElementById('preview-score');
+  const slider = document.getElementById('preview-slider');
+  const DEFAULTS = JSON.parse(document.getElementById('default-bands').textContent);
+  let bands = JSON.parse(document.getElementById('initial-bands').textContent);
+  if (!bands || bands.length === 0) bands = JSON.parse(JSON.stringify(DEFAULTS));
+
+  const DECISION_OPTS = [
+    {v: 'deny',    label: '🚫 deny'},
+    {v: 'review',  label: '◐ review'},
+    {v: 'approve', label: '✅ approve'},
+  ];
+
+  function render() {
+    tbody.innerHTML = '';
+    bands.forEach((b, i) => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-50';
+      tr.innerHTML = `
+        <td class="px-4 py-2">
+          <label class="inline-flex items-center cursor-pointer">
+            <input type="checkbox" ${b.active ? 'checked' : ''} data-i="${i}" data-k="active" />
+          </label>
+        </td>
+        <td class="px-4 py-2"><input class="w-full px-2 py-1 text-sm border border-slate-300 rounded" maxlength="30" value="${(b.label || '').replace(/"/g, '&quot;')}" data-i="${i}" data-k="label" /></td>
+        <td class="px-4 py-2"><input type="number" min="0" max="100" class="w-20 px-2 py-1 text-sm border border-slate-300 rounded font-mono" value="${b.score_start}" data-i="${i}" data-k="score_start" /></td>
+        <td class="px-4 py-2"><input type="number" min="0" max="100" class="w-20 px-2 py-1 text-sm border border-slate-300 rounded font-mono" value="${b.score_end}" data-i="${i}" data-k="score_end" /></td>
+        <td class="px-4 py-2">
+          <select class="px-2 py-1 text-sm border border-slate-300 rounded" data-i="${i}" data-k="decision">
+            ${DECISION_OPTS.map(o => `<option value="${o.v}" ${o.v === b.decision ? 'selected' : ''}>${o.label}</option>`).join('')}
+          </select>
+        </td>
+        <td class="px-4 py-2">
+          <div class="inline-flex items-center gap-2">
+            <input type="color" value="${b.color || '#64748b'}" data-i="${i}" data-k="color" class="w-10 h-8 border border-slate-300 rounded cursor-pointer" />
+            <code class="text-[10px] text-slate-500">${b.color || '—'}</code>
+          </div>
+        </td>
+        <td class="px-4 py-2 text-right">
+          <button type="button" class="remove-band text-xs text-rose-600 hover:text-rose-800" data-i="${i}" title="Remove this band">✗</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+    wireEvents();
+    updatePreview();
+  }
+
+  function wireEvents() {
+    tbody.querySelectorAll('[data-i]').forEach(el => {
+      el.addEventListener('input', onFieldChange);
+      el.addEventListener('change', onFieldChange);
+    });
+    tbody.querySelectorAll('.remove-band').forEach(el => {
+      el.addEventListener('click', () => {
+        const i = parseInt(el.dataset.i, 10);
+        bands.splice(i, 1);
+        render();
+      });
+    });
+  }
+
+  function onFieldChange(e) {
+    const el = e.target;
+    const i = parseInt(el.dataset.i, 10);
+    const k = el.dataset.k;
+    let v = el.type === 'checkbox' ? el.checked : el.value;
+    if (k === 'score_start' || k === 'score_end') v = parseInt(v, 10) || 0;
+    bands[i][k] = v;
+    updatePreview();
+  }
+
+  function resolveBand(score) {
+    // Highest-range band containing the score wins; if none match, pick the closest.
+    const sorted = [...bands].filter(b => b.active).sort((a,b) => b.score_start - a.score_start);
+    for (const b of sorted) {
+      if (score >= b.score_start && score <= b.score_end) return b;
+    }
+    return null;
+  }
+
+  function updatePreview() {
+    const s = parseInt(slider.value, 10);
+    previewScore.textContent = s;
+    const b = resolveBand(s);
+    if (b) {
+      preview.textContent = `${b.label} — ${b.decision}`;
+      preview.style.background = b.color + '33';
+      preview.style.color = b.color;
+      preview.style.border = `1px solid ${b.color}`;
+    } else {
+      preview.textContent = '—';
+      preview.style.background = '#f1f5f9';
+      preview.style.color = '#64748b';
+      preview.style.border = '1px solid #cbd5e1';
+    }
+  }
+
+  slider.addEventListener('input', updatePreview);
+  document.getElementById('add-band').addEventListener('click', () => {
+    bands.push({label: 'New Band', score_start: 0, score_end: 0, color: '#64748b', active: true, decision: 'review'});
+    render();
+  });
+  document.getElementById('reset-defaults').addEventListener('click', () => {
+    if (confirm('Reset all bands to defaults?')) {
+      bands = JSON.parse(JSON.stringify(DEFAULTS));
+      render();
+    }
+  });
+
+  window.syncBandsJson = () => { jsonInput.value = JSON.stringify(bands); };
+  render();
+})();
+</script>
+{% endblock %}

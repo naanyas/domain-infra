@@ -1,0 +1,111 @@
+{% extends "console/base.html" %}
+{% block title %}ML status · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-xs mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">ML</span>
+</nav>
+
+<div class="mb-6">
+    <h1 class="text-2xl font-semibold">🤖 ML classifier status</h1>
+    <p class="text-sm text-slate-500 mt-1 max-w-3xl">
+        The fraud classifier is a gradient-boosted trees model (scikit-learn) trained on every
+        investigator-labeled submission. Each verdict confirm/correct, entity tag, cluster mark,
+        or threat flag contributes one training example. Retrain from the command line:
+        <code class="bg-slate-100 px-1.5 py-0.5 rounded text-xs">python manage.py train_fraud_model</code>
+    </p>
+</div>
+
+<div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="bg-white border border-slate-200 rounded-lg p-4">
+        <div class="text-[10px] uppercase text-slate-500">Total labels</div>
+        <div class="text-3xl font-bold">{{ report.total }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg p-4">
+        <div class="text-[10px] uppercase text-slate-500">Bad-class (deny + bad-tag)</div>
+        <div class="text-3xl font-bold text-rose-700">{{ report.bad }}</div>
+        <div class="text-xs text-slate-500 mt-1">Min per class: {{ report.min_per_class }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg p-4">
+        <div class="text-[10px] uppercase text-slate-500">Good-class (approve + good-tag)</div>
+        <div class="text-3xl font-bold text-emerald-700">{{ report.good }}</div>
+        <div class="text-xs text-slate-500 mt-1">Min per class: {{ report.min_per_class }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-lg p-4">
+        <div class="text-[10px] uppercase text-slate-500">Ready to train?</div>
+        <div class="text-2xl font-bold {% if report.ready_to_train %}text-emerald-700{% else %}text-amber-700{% endif %}">
+            {% if report.ready_to_train %}✅ YES{% else %}⏳ NOT YET{% endif %}
+        </div>
+        <div class="text-xs text-slate-500 mt-1">Min total: {{ report.min_required }}</div>
+    </div>
+</div>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+    <div class="bg-white border border-slate-200 rounded-lg p-5">
+        <h2 class="text-xs uppercase text-slate-500 mb-3">Labels by class</h2>
+        <table class="w-full text-sm">
+            <thead class="text-[10px] uppercase text-slate-500">
+                <tr><th class="text-left pb-2">Class</th><th class="text-right pb-2">Count</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for lbl, n in report.per_label.items %}
+                <tr><td class="py-1.5 font-mono text-xs">{{ lbl }}</td><td class="py-1.5 text-right font-semibold">{{ n }}</td></tr>
+            {% empty %}
+                <tr><td colspan="2" class="py-3 text-center text-sm text-slate-400 italic">No labels yet — start confirming/correcting submissions</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="bg-white border border-slate-200 rounded-lg p-5">
+        <h2 class="text-xs uppercase text-slate-500 mb-3">Current model</h2>
+        {% if report.current_model %}
+        <dl class="text-sm space-y-1.5">
+            <div class="flex justify-between"><dt class="text-slate-500">Status</dt><dd class="font-semibold {% if report.current_model.status == 'trained' %}text-emerald-700{% endif %}">{{ report.current_model.status }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Version</dt><dd class="font-mono text-xs">{{ report.current_model.model_version }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Accuracy</dt><dd class="font-mono">{{ report.current_model.accuracy|floatformat:3 }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">AUC</dt><dd class="font-mono">{{ report.current_model.auc|floatformat:3 }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Train/test size</dt><dd class="font-mono">{{ report.current_model.n_train }} / {{ report.current_model.n_test }}</dd></div>
+        </dl>
+        {% else %}
+        <div class="bg-slate-50 border border-slate-200 rounded p-4 text-sm text-slate-600">
+            No model has been trained yet. Once you accumulate enough labels, run
+            <code class="bg-slate-100 px-1 rounded text-xs">python manage.py train_fraud_model</code>
+            to fit the first model. It will auto-load into the scoring pipeline on the next submission.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if report.current_model.feature_importances %}
+<div class="bg-white border border-slate-200 rounded-lg p-5 mb-6">
+    <h2 class="text-xs uppercase text-slate-500 mb-3">Top-20 feature importances</h2>
+    <table class="w-full text-sm">
+        <thead class="text-[10px] uppercase text-slate-500">
+            <tr><th class="text-left pb-2">Feature</th><th class="text-right pb-2">Importance</th></tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+        {% for name, imp in report.current_model.feature_importances %}
+            <tr>
+                <td class="py-1 font-mono text-xs">{{ name }}</td>
+                <td class="py-1 text-right font-mono text-xs">{{ imp|floatformat:4 }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-600">
+    <strong class="text-slate-900">How the learning loop works:</strong>
+    <ul class="list-disc list-inside mt-2 space-y-1">
+        <li>Every verdict confirm/correct, entity tag, cluster mark, and threat flag writes a <code class="text-xs bg-white px-1 rounded">TrainingLabel</code> row with a frozen snapshot of all signals at that moment.</li>
+        <li>The snapshot includes: SDAT raw scan, IPQS enrichment, entity tags + reputations, fingerprint hashes + scores, all ~50 feature columns.</li>
+        <li>Re-train by running the management command. It fits a gradient-boosted classifier and persists it to <code class="text-xs bg-white px-1 rounded">ml_models/</code>.</li>
+        <li>The scoring pipeline auto-loads the latest model on each submission. Predicted p(fraud) moves the score by up to ±30 points.</li>
+        <li>Predictions are logged on every verdict's <code class="text-xs bg-white px-1 rounded">reasons</code> list so you can see what the model thought and why.</li>
+    </ul>
+</div>
+{% endblock %}

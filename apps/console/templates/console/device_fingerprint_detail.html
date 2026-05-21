@@ -1,0 +1,101 @@
+{% extends "console/base.html" %}
+{% block title %}Device fingerprint · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-xs mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <a href="{% url 'console:clusters' %}#device" class="text-brand-600 hover:underline">Clusters</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">Device fingerprint</span>
+</nav>
+
+<div class="mb-5">
+    <div class="text-xs uppercase tracking-wider text-slate-500">Device fingerprint (raw)</div>
+    <h1 class="text-lg font-mono font-semibold break-all">{{ raw|default:"(empty)" }}</h1>
+    <p class="text-sm text-slate-500 mt-2">
+        {{ total }} submission{{ total|pluralize }} share this exact device fingerprint.
+        Same browser/device across submissions = classic bot / farm signal.
+    </p>
+</div>
+
+<div class="grid grid-cols-3 gap-6 mb-6">
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Distinct emails</div>
+        <div class="text-2xl font-semibold mt-1">{{ emails|length }}</div>
+    </div>
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Distinct submitter IPs</div>
+        <div class="text-2xl font-semibold mt-1">{{ ips|length }}</div>
+    </div>
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Submissions</div>
+        <div class="text-2xl font-semibold mt-1">{{ total }}</div>
+    </div>
+</div>
+
+{% if emails or ips %}
+<div class="grid grid-cols-2 gap-4 mb-6">
+    {% if emails %}
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Emails seen on this device</div>
+        <div class="flex flex-wrap gap-1">
+        {% for e in emails %}
+            <a href="/console/submissions/?q={{ e }}" class="inline-block px-2 py-0.5 text-xs bg-slate-100 rounded font-mono hover:bg-slate-200">{{ e }}</a>
+        {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% if ips %}
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">IPs seen on this device</div>
+        <div class="flex flex-wrap gap-1">
+        {% for ip in ips %}
+            <a href="{% url 'console:ip-detail' ip %}" class="inline-block px-2 py-0.5 text-xs bg-slate-100 rounded font-mono hover:bg-slate-200">{{ ip }}</a>
+        {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="bg-white rounded-lg border border-slate-200">
+    <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="text-sm font-medium">Submissions sharing this device fingerprint</h2>
+        <span class="text-xs text-slate-500">{{ subs|length }} row{{ subs|length|pluralize }}</span>
+    </div>
+    <table class="w-full text-sm">
+        <thead class="text-xs text-slate-500 uppercase bg-slate-50">
+            <tr>
+                <th class="text-left font-medium px-5 py-2">When</th>
+                <th class="text-left font-medium px-5 py-2">Domain / Email</th>
+                <th class="text-left font-medium px-5 py-2">Submitter IP</th>
+                <th class="text-left font-medium px-5 py-2">Verdict</th>
+                <th class="text-left font-medium px-5 py-2">Score</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+        {% for s in subs %}
+            <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:submission-detail' s.id %}'">
+                <td class="px-5 py-2 text-xs text-slate-500 whitespace-nowrap">{{ s.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="px-5 py-2">
+                    <div class="font-mono text-xs">{{ s.domain|default:"—" }}</div>
+                    {% if s.contact_email_raw %}<div class="text-xs text-slate-500">{{ s.contact_email_raw }}</div>{% endif %}
+                </td>
+                <td class="px-5 py-2 font-mono text-xs">{{ s.submitter_ip.address|default:"—" }}</td>
+                <td class="px-5 py-2 text-xs">
+                    {% if s.verdict %}
+                        {% if s.verdict.effective_decision == 'approve' %}<span class="text-emerald-700">approve</span>
+                        {% elif s.verdict.effective_decision == 'deny' %}<span class="text-rose-700">deny</span>
+                        {% else %}<span class="text-amber-700">review</span>{% endif %}
+                    {% else %}<span class="text-slate-400">{{ s.status }}</span>{% endif %}
+                </td>
+                <td class="px-5 py-2 font-mono text-xs">{% if s.verdict %}{{ s.verdict.score }}{% endif %}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="5" class="px-5 py-8 text-center text-slate-500 text-sm">No submissions.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

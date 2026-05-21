@@ -1,0 +1,413 @@
+{% extends "console/base.html" %}
+{% block title %}{{ fingerprint.kind }} fingerprint · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-xs mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">Fingerprint</span>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500 font-mono">{{ fingerprint.kind }}</span>
+</nav>
+
+<div class="mb-5">
+    <div class="text-xs uppercase tracking-wider text-slate-500">{{ fingerprint.kind }} fingerprint</div>
+    <h1 class="text-xl font-mono font-semibold break-all">{{ fingerprint.fingerprint_hash }}</h1>
+    <p class="text-sm text-slate-600 mt-2 max-w-3xl">
+    {% if fingerprint.kind == 'infrastructure' %}
+        Infrastructure fingerprint: a stable hash of the domain's nameserver set, MX host set, resolving IPs, registrar, ASN, SPF qualifier, DMARC policy, and TLS issuer. Two submissions sharing this hash indicate they're backed by the same infrastructure — commonly a sign of an organized fraud ring.
+    {% else %}
+        Actor fingerprint: a stable hash of the contact email domain, phone country code, name phonetic hash, and submitted device fingerprint. Two submissions sharing this hash indicate they look like the same submitting actor.
+    {% endif %}
+    </p>
+</div>
+
+{% if messages %}
+{% for message in messages %}
+<div class="mb-4 p-3 rounded-md border {% if message.tags == 'success' %}bg-emerald-50 border-emerald-200 text-emerald-900{% else %}bg-slate-50 border-slate-200 text-slate-800{% endif %} text-sm">
+    {{ message }}
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- Cluster-level feedback: propagate a good/bad judgement across the whole cluster -->
+{% with rep=fingerprint.reputation %}
+{% if rep and rep.cluster_verdict %}
+<!-- Already marked — show durable banner. All 5 verdicts count as REVIEWED. -->
+{% with cv=rep.cluster_verdict %}
+<div class="border-2 rounded-lg p-4 mb-6
+    {% if cv == 'good' %}bg-emerald-50 border-emerald-300
+    {% elif cv == 'bad' %}bg-rose-50 border-rose-300
+    {% elif cv == 'same_user' %}bg-amber-50 border-amber-300
+    {% else %}bg-slate-50 border-slate-300{% endif %}">
+    <div class="flex items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-2 text-sm font-semibold
+                {% if cv == 'good' %}text-emerald-900
+                {% elif cv == 'bad' %}text-rose-900
+                {% elif cv == 'same_user' %}text-amber-900
+                {% else %}text-slate-900{% endif %}">
+                {% if cv == 'good' %}✓ Cluster reviewed — GOOD
+                {% elif cv == 'bad' %}✗ Cluster reviewed — BAD
+                {% elif cv == 'not_cluster' %}— Reviewed — NOT A CLUSTER
+                {% elif cv == 'same_user' %}🔁 Reviewed — SAME USER
+                {% else %}? Reviewed — UNKNOWN{% endif %}
+                <span class="text-xs font-normal opacity-70">({{ rep.cluster_verdict_size }} submission{{ rep.cluster_verdict_size|pluralize }})</span>
+            </div>
+            <div class="text-xs mt-1 opacity-80">
+                By <strong>{{ rep.cluster_verdict_by|default:"—" }}</strong> · {{ rep.cluster_verdict_at|date:"Y-m-d H:i" }}
+                {% if rep.cluster_verdict_reason %} · "{{ rep.cluster_verdict_reason }}"{% endif %}
+            </div>
+            <div class="text-xs mt-1 opacity-70">
+                {% if cv == 'good' or cv == 'bad' %}Future submissions matching this fingerprint will inherit this judgement via tag-based score adjustments and reputation weighting.
+                {% elif cv == 'not_cluster' %}Dismissed — entities were not tagged and reputation was not changed.
+                {% elif cv == 'same_user' %}Marked as repeat activity by a single identity — entities were not tagged.
+                {% else %}Reviewed without a ruling — excluded from ML training.{% endif %}
+                Cluster is removed from the open-clusters queue.
+            </div>
+        </div>
+        <div class="flex flex-col gap-1 text-xs">
+            <form method="POST" action="{% url 'console:fingerprint-cluster-mark' fingerprint.fingerprint_hash %}" class="inline"
+                  onsubmit="return confirm('Re-mark as GOOD?');">
+                {% csrf_token %}
+                <input type="hidden" name="verdict" value="good" />
+                <input type="hidden" name="reason" value="Re-marked as GOOD" />
+                <button class="w-full px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium">✓ GOOD</button>
+            </form>
+            <form method="POST" action="{% url 'console:fingerprint-cluster-mark' fingerprint.fingerprint_hash %}" class="inline"
+                  onsubmit="return confirm('Re-mark as BAD?');">
+                {% csrf_token %}
+                <input type="hidden" name="verdict" value="bad" />
+                <input type="hidden" name="reason" value="Re-marked as BAD" />
+                <button class="w-full px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded font-medium">✗ BAD</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endwith %}
+{% elif shared_submissions|length >= 1 %}
+<div class="bg-gradient-to-br from-indigo-50 to-white border border-indigo-200 rounded-lg p-4 mb-6">
+    <div class="mb-3">
+        <div class="text-sm font-semibold text-indigo-900">Review this cluster</div>
+        <div class="text-xs text-indigo-800 mt-0.5 max-w-3xl">
+            Review the {{ shared_submissions|length }} linked submission{{ shared_submissions|length|pluralize }} below, then pick the judgement that matches. <strong>Good</strong>/<strong>Bad</strong> propagate entity tags (skipping VPN / proxy / Tor IPs); <strong>Not a cluster</strong> and <strong>Same user</strong> are judgement-only — they record the label for ML training without bulk-tagging.
+        </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+        <form method="POST" action="{% url 'console:fingerprint-cluster-mark' fingerprint.fingerprint_hash %}" class="inline"
+              onsubmit="return confirm('Mark this entire cluster as GOOD? Tags {{ shared_submissions|length }} submissions worth of entities as good.');">
+            {% csrf_token %}
+            <input type="hidden" name="verdict" value="good" />
+            <input type="hidden" name="reason" value="Cluster confirmed good on {{ fingerprint.fingerprint_hash|slice:':12' }}" />
+            <button class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded-md font-medium" title="Legit multi-user cluster — tag entities good + positive reputation">✓ Mark GOOD</button>
+        </form>
+        <form method="POST" action="{% url 'console:fingerprint-cluster-mark' fingerprint.fingerprint_hash %}" class="inline"
+              onsubmit="return confirm('Mark this entire cluster as BAD? Tags {{ shared_submissions|length }} submissions worth of entities as bad — future submissions reusing any of these attributes will start failing.');">
+            {% csrf_token %}
+            <input type="hidden" name="verdict" value="bad" />
+            <input type="hidden" name="reason" value="Cluster confirmed bad on {{ fingerprint.fingerprint_hash|slice:':12' }}" />
+            <button class="px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm rounded-md font-medium" title="Confirmed fraud cluster — tag entities bad + negative reputation">✗ Mark BAD</button>
+        </form>
+        <form method="POST" action="{% url 'console:fingerprint-cluster-mark' fingerprint.fingerprint_hash %}" class="inline"
+              onsubmit="return confirm('Dismiss as not a real cluster? No entity tags will propagate; this only records your judgement.');">
+            {% csrf_token %}
+            <input type="hidden" name="verdict" value="not_cluster" />
+            <input type="hidden" name="reason" value="Dismissed: not a cluster" />
+            <button class="px-3 py-2 bg-slate-500 hover:bg-slate-600 text-white text-sm rounded-md font-medium" title="These submissions aren't actually related — dismiss">— Not a cluster</button>
+        </form>
+        <form method="POST" action="{% url 'console:fingerprint-cluster-mark' fingerprint.fingerprint_hash %}" class="inline"
+              onsubmit="return confirm('Mark as same-user repeat activity? Records the label without tagging entities.');">
+            {% csrf_token %}
+            <input type="hidden" name="verdict" value="same_user" />
+            <input type="hidden" name="reason" value="Same user repeat activity" />
+            <button class="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-sm rounded-md font-medium" title="Same person across submissions — not a multi-actor ring">🔁 Same user</button>
+        </form>
+        <form method="POST" action="{% url 'console:fingerprint-cluster-mark' fingerprint.fingerprint_hash %}" class="inline"
+              onsubmit="return confirm('Mark reviewed with UNKNOWN verdict? Cluster drops off the open queue; nothing propagated and ML training skips it.');">
+            {% csrf_token %}
+            <input type="hidden" name="verdict" value="unknown" />
+            <input type="hidden" name="reason" value="Reviewed but verdict unclear" />
+            <button class="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white text-sm rounded-md font-medium" title="Reviewed but unclear — close without a ruling">? Unknown</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endwith %}
+
+<div class="grid grid-cols-3 gap-6">
+
+<div class="col-span-2 space-y-6">
+
+    <!-- Canonical signals that produced this hash -->
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Canonical signals that produced this hash</h2>
+        <dl class="text-sm space-y-2">
+        {% for k, v in fingerprint.canonical_signals.items %}
+            <div class="flex items-start justify-between gap-4 py-1 border-b border-slate-50">
+                <dt class="text-slate-500 font-mono text-xs">{{ k }}</dt>
+                <dd class="font-mono text-xs text-right break-all">
+                    {% if v %}{{ v }}{% else %}<span class="text-slate-400">—</span>{% endif %}
+                </dd>
+            </div>
+        {% endfor %}
+        </dl>
+    </div>
+
+    <!-- Cluster review — full signup + enrichment per submission, expandable -->
+    <div class="bg-white rounded-lg border border-slate-200">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h2 class="text-sm font-medium">Cluster review — signup details per member</h2>
+            <div class="flex items-center gap-3 text-xs">
+                <span class="text-slate-500">{{ shared_details|length }} submission{{ shared_details|length|pluralize }}</span>
+                <button type="button" id="expand-all" class="text-brand-600 hover:underline">expand all</button>
+                <button type="button" id="collapse-all" class="text-slate-500 hover:underline">collapse all</button>
+            </div>
+        </div>
+        <div class="divide-y divide-slate-100">
+        {% for d in shared_details %}
+            <details class="cluster-member">
+                <summary class="px-5 py-3 cursor-pointer hover:bg-slate-50 flex items-center gap-4">
+                    <span class="text-slate-400 text-xs">▸</span>
+                    <span class="text-xs text-slate-500 whitespace-nowrap">{{ d.s.created_at|date:"Y-m-d H:i" }}</span>
+                    <div class="flex-1 min-w-0">
+                        <div class="font-mono text-xs truncate">{{ d.s.domain|default:"—" }}</div>
+                        {% if d.s.contact_email_raw %}<div class="text-[11px] text-slate-500 truncate">{{ d.s.contact_email_raw }}</div>{% endif %}
+                    </div>
+                    {% if d.ip %}<span class="text-[11px] font-mono text-slate-600">{{ d.s.submitter_ip_raw }}</span>{% endif %}
+                    {% if d.ip.country %}<span class="text-[11px] text-slate-500">{{ d.ip.country }}</span>{% endif %}
+                    {% if d.verdict %}
+                        {% if d.verdict.decision == 'deny' %}
+                            <span class="text-[11px] font-semibold px-2 py-0.5 rounded bg-rose-50 text-rose-700">deny · {{ d.verdict.score }}</span>
+                        {% elif d.verdict.decision == 'approve' %}
+                            <span class="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">approve · {{ d.verdict.score }}</span>
+                        {% else %}
+                            <span class="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-700">review · {{ d.verdict.score }}</span>
+                        {% endif %}
+                    {% endif %}
+                    <a href="{% url 'console:submission-detail' d.s.id %}" class="text-[11px] text-brand-600 hover:underline ml-2" onclick="event.stopPropagation()">open →</a>
+                </summary>
+                <div class="px-5 py-4 bg-slate-50 border-t border-slate-100 grid grid-cols-2 gap-4 text-xs">
+                    {# ── INPUTS ────────────────────────── #}
+                    <div class="bg-white rounded border border-slate-200 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Signup inputs</div>
+                        <dl class="space-y-1">
+                        {% for k, v in d.inputs %}
+                            <div class="flex gap-2"><dt class="text-slate-500 min-w-[90px]">{{ k }}:</dt><dd class="font-mono text-[11px] break-all">{{ v }}</dd></div>
+                        {% endfor %}
+                        </dl>
+                        {% if d.metadata %}
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mt-3 mb-1">Metadata</div>
+                        <dl class="space-y-0.5 text-[11px]">
+                        {% for k, v in d.metadata %}
+                            <div class="flex gap-2"><dt class="text-slate-500 min-w-[90px]">{{ k }}:</dt><dd class="font-mono break-all">{{ v|stringformat:"s"|truncatechars:80 }}</dd></div>
+                        {% endfor %}
+                        </dl>
+                        {% endif %}
+                    </div>
+
+                    {# ── ENRICHMENT ────────────────────── #}
+                    <div class="bg-white rounded border border-slate-200 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Enrichment</div>
+                        {% if d.ip %}
+                        <div class="mb-2">
+                            <div class="text-[10px] uppercase text-slate-400">Submitter IP</div>
+                            <div class="flex items-center gap-1.5 text-[11px]">
+                                <a href="{{ d.ip.detail_url }}" class="font-mono text-brand-600 hover:underline">{{ d.s.submitter_ip_raw }}</a>
+                                {% if d.ip.tag == 'bad' %}<span class="px-1 rounded bg-rose-100 text-rose-700 text-[10px]">BAD</span>{% elif d.ip.tag == 'good' %}<span class="px-1 rounded bg-emerald-100 text-emerald-700 text-[10px]">GOOD</span>{% endif %}
+                            </div>
+                            <div class="text-[11px] text-slate-600 mt-0.5">{{ d.ip.city }}{% if d.ip.city and d.ip.country %}, {% endif %}{{ d.ip.country }} {% if d.ip.asn %}· ASN {{ d.ip.asn }}{% endif %}</div>
+                            <div class="text-[11px] mt-0.5 flex flex-wrap gap-1">
+                                {% if d.ip.is_vpn %}<span class="px-1 rounded bg-amber-100 text-amber-700">VPN</span>{% endif %}
+                                {% if d.ip.is_proxy %}<span class="px-1 rounded bg-amber-100 text-amber-700">Proxy</span>{% endif %}
+                                {% if d.ip.is_tor %}<span class="px-1 rounded bg-rose-100 text-rose-700">Tor</span>{% endif %}
+                                {% if d.ip.is_datacenter %}<span class="px-1 rounded bg-slate-100 text-slate-700">Datacenter</span>{% endif %}
+                                {% if d.ip.bot_status %}<span class="px-1 rounded bg-rose-100 text-rose-700">Bot</span>{% endif %}
+                                {% if d.ip.fraud_score %}<span class="px-1 rounded {% if d.ip.fraud_score >= 80 %}bg-rose-100 text-rose-700{% elif d.ip.fraud_score >= 50 %}bg-amber-100 text-amber-700{% else %}bg-slate-100 text-slate-600{% endif %}">IPQS {{ d.ip.fraud_score }}</span>{% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if d.email %}
+                        <div class="mb-2">
+                            <div class="text-[10px] uppercase text-slate-400">Email</div>
+                            <a href="{{ d.email.detail_url }}" class="font-mono text-[11px] text-brand-600 hover:underline">{{ d.email.normalized }}</a>
+                            {% if d.email.tag == 'bad' %}<span class="ml-1 px-1 rounded bg-rose-100 text-rose-700 text-[10px]">BAD</span>{% elif d.email.tag == 'good' %}<span class="ml-1 px-1 rounded bg-emerald-100 text-emerald-700 text-[10px]">GOOD</span>{% endif %}
+                            <div class="text-[11px] mt-0.5 flex flex-wrap gap-1">
+                                {% if d.email.is_disposable %}<span class="px-1 rounded bg-rose-100 text-rose-700">Disposable</span>{% endif %}
+                                {% if d.email.is_role_based %}<span class="px-1 rounded bg-amber-100 text-amber-700">Role</span>{% endif %}
+                                {% if d.email.ipqs_honeypot %}<span class="px-1 rounded bg-rose-100 text-rose-700">Honeypot</span>{% endif %}
+                                {% if d.email.ipqs_overall_score is not None %}<span class="px-1 rounded bg-slate-100 text-slate-600">IPQS {{ d.email.ipqs_overall_score }}/4</span>{% endif %}
+                                {% if d.email.ipqs_spam_trap_score %}<span class="px-1 rounded bg-amber-100 text-amber-700">Spam-trap: {{ d.email.ipqs_spam_trap_score }}</span>{% endif %}
+                                {% if d.email.mx_reachable is False %}<span class="px-1 rounded bg-rose-100 text-rose-700">No MX</span>{% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if d.name %}
+                        <div class="mb-2">
+                            <div class="text-[10px] uppercase text-slate-400">Name</div>
+                            <a href="{{ d.name.detail_url }}" class="text-[11px] text-brand-600 hover:underline">{{ d.name.normalized }}</a>
+                            <span class="text-[11px] text-slate-500">(phonetic: <code>{{ d.name.phonetic }}</code>)</span>
+                            {% if d.name.tag == 'bad' %}<span class="ml-1 px-1 rounded bg-rose-100 text-rose-700 text-[10px]">BAD</span>{% elif d.name.tag == 'good' %}<span class="ml-1 px-1 rounded bg-emerald-100 text-emerald-700 text-[10px]">GOOD</span>{% endif %}
+                        </div>
+                        {% endif %}
+                        {% if d.phone %}
+                        <div>
+                            <div class="text-[10px] uppercase text-slate-400">Phone</div>
+                            <a href="{{ d.phone.detail_url }}" class="font-mono text-[11px] text-brand-600 hover:underline">{{ d.phone.e164|default:"—" }}</a>
+                            {% if d.phone.country_code %}<span class="text-[11px] text-slate-500">{{ d.phone.country_code }}</span>{% endif %}
+                            {% if d.phone.line_type %}<span class="text-[11px] text-slate-500">· {{ d.phone.line_type }}</span>{% endif %}
+                            {% if d.phone.is_valid is False %}<span class="ml-1 px-1 rounded bg-rose-100 text-rose-700 text-[10px]">INVALID</span>{% endif %}
+                            {% if d.phone.tag == 'bad' %}<span class="ml-1 px-1 rounded bg-rose-100 text-rose-700 text-[10px]">BAD</span>{% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    {# ── DOMAIN META ──────────────────── #}
+                    {% if d.domain_meta %}
+                    <div class="bg-white rounded border border-slate-200 p-3 col-span-2">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Domain scan</div>
+                        <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                            {% if d.domain_meta.age_days %}<div class="flex gap-2"><dt class="text-slate-500">Age:</dt><dd>{{ d.domain_meta.age_days }}d</dd></div>{% endif %}
+                            {% if d.domain_meta.registrar %}<div class="flex gap-2"><dt class="text-slate-500">Registrar:</dt><dd class="font-mono">{{ d.domain_meta.registrar|truncatechars:40 }}</dd></div>{% endif %}
+                            {% if d.domain_meta.page_title %}<div class="flex gap-2 col-span-2"><dt class="text-slate-500">Page title:</dt><dd class="font-mono truncate">"{{ d.domain_meta.page_title|truncatechars:120 }}"</dd></div>{% endif %}
+                            {% if d.domain_meta.mx_provider %}<div class="flex gap-2 col-span-2"><dt class="text-slate-500">MX provider:</dt><dd class="font-mono">{{ d.domain_meta.mx_provider|stringformat:"s"|truncatechars:120 }}</dd></div>{% endif %}
+                            {% if d.domain_meta.ns_records %}<div class="flex gap-2 col-span-2"><dt class="text-slate-500">NS:</dt><dd class="font-mono">{{ d.domain_meta.ns_records|stringformat:"s"|truncatechars:140 }}</dd></div>{% endif %}
+                        </dl>
+                        <div class="flex gap-3 mt-2 text-[11px]">
+                            <span>SPF {% if d.domain_meta.spf_valid %}✅{% else %}❌{% endif %}</span>
+                            <span>DKIM {% if d.domain_meta.dkim_valid %}✅{% else %}❌{% endif %}</span>
+                            <span>DMARC {% if d.domain_meta.dmarc_valid %}✅{% else %}❌{% endif %}</span>
+                        </div>
+                        {% if d.domain_meta.signals_triggered %}
+                        <div class="mt-2">
+                            <div class="text-[10px] uppercase text-slate-400 mb-1">Signals triggered</div>
+                            <div class="text-[11px] font-mono text-slate-600 break-all">{{ d.domain_meta.signals_triggered|stringformat:"s"|truncatechars:240 }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    {# ── VERDICT ──────────────────────── #}
+                    {% if d.verdict %}
+                    <div class="bg-white rounded border border-slate-200 p-3 col-span-2">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Verdict</div>
+                        <div class="text-[11px]">
+                            <strong class="
+                                {% if d.verdict.decision == 'deny' %}text-rose-700
+                                {% elif d.verdict.decision == 'approve' %}text-emerald-700
+                                {% else %}text-amber-700{% endif %}">{{ d.verdict.decision|upper }} · {{ d.verdict.score }}</strong>
+                            {% if d.verdict.review_status %}<span class="ml-2 px-1 rounded bg-slate-100 text-slate-600 text-[10px] uppercase">{{ d.verdict.review_status }}</span>{% endif %}
+                            {% if d.verdict.human_override %}<span class="ml-1 px-1 rounded bg-indigo-100 text-indigo-700 text-[10px]">override → {{ d.verdict.human_override }}</span>{% endif %}
+                        </div>
+                        {% if d.verdict.summary %}<div class="mt-1 text-[11px] text-slate-700">{{ d.verdict.summary|truncatechars:300 }}</div>{% endif %}
+                        {% if d.verdict.reasons %}
+                        <ul class="mt-2 space-y-0.5">
+                        {% for r in d.verdict.reasons|slice:":8" %}
+                            <li class="text-[11px] text-slate-600 flex items-start gap-2">
+                                {% if r.weight and r.weight > 0 %}<span class="inline-block w-6 text-right text-rose-700 font-mono font-semibold">+{{ r.weight }}</span>
+                                {% elif r.weight and r.weight < 0 %}<span class="inline-block w-6 text-right text-emerald-700 font-mono font-semibold">{{ r.weight }}</span>
+                                {% else %}<span class="inline-block w-6 text-right text-slate-400">·</span>{% endif %}
+                                <span class="flex-1">{{ r.description|truncatechars:180 }}</span>
+                            </li>
+                        {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </details>
+        {% empty %}
+            <div class="px-5 py-8 text-center text-slate-500 text-sm">No submissions sharing this fingerprint yet.</div>
+        {% endfor %}
+        </div>
+    </div>
+
+    <script>
+    (function () {
+      document.getElementById('expand-all')?.addEventListener('click', () => {
+        document.querySelectorAll('.cluster-member').forEach(d => d.open = true);
+      });
+      document.getElementById('collapse-all')?.addEventListener('click', () => {
+        document.querySelectorAll('.cluster-member').forEach(d => d.open = false);
+      });
+    })();
+    </script>
+
+    <!-- Fuzzy neighbors -->
+    {% if neighbors %}
+    <div class="bg-white rounded-lg border border-slate-200">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h2 class="text-sm font-medium">Fuzzy neighbors (similar but not identical)</h2>
+            <span class="text-xs text-slate-500">{{ neighbors|length }}</span>
+        </div>
+        <div class="divide-y divide-slate-100">
+        {% for n in neighbors %}
+            <a href="{% url 'console:fingerprint-detail' n.fingerprint.fingerprint_hash %}"
+               class="flex items-center justify-between px-5 py-2 hover:bg-slate-50 text-sm">
+                <span class="font-mono text-xs">{{ n.fingerprint.fingerprint_hash|slice:":24" }}…</span>
+                <span class="flex items-center gap-4 text-xs text-slate-500">
+                    <span>similarity: <strong class="text-slate-700">{{ n.similarity }}</strong></span>
+                    {% if n.fingerprint.reputation %}
+                    <span>rep: {{ n.fingerprint.reputation.reputation_score|floatformat:2 }}</span>
+                    {% endif %}
+                </span>
+            </a>
+        {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Right: reputation -->
+<div class="col-span-1 space-y-6">
+    <div class="bg-slate-900 text-slate-200 rounded-lg p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-400 mb-3">Reputation</h2>
+        {% if fingerprint.reputation %}
+        {% with r=fingerprint.reputation %}
+        <dl class="text-sm space-y-2">
+            <div class="flex justify-between" title="Times this fingerprint appeared on an APPROVE verdict across our customer network">
+                <dt class="text-slate-400">Net approved</dt>
+                <dd class="text-emerald-400">{{ r.approved_count }}</dd>
+            </div>
+            <div class="flex justify-between" title="Times this fingerprint appeared on a DENY verdict across our customer network">
+                <dt class="text-slate-400">Net flagged</dt>
+                <dd class="text-rose-400">{{ r.flagged_count }}</dd>
+            </div>
+            <div class="flex justify-between" title="Times this fingerprint appeared on a REVIEW verdict">
+                <dt class="text-slate-400">Net review</dt>
+                <dd class="text-amber-400">{{ r.review_count }}</dd>
+            </div>
+            <div class="flex justify-between" title="Investigator reports: the system DENIED but they said it was good">
+                <dt class="text-slate-400">Feedback: FP</dt>
+                <dd>{{ r.feedback_false_positive_count }}</dd>
+            </div>
+            <div class="flex justify-between" title="Investigator reports: the system APPROVED but fraud was confirmed later">
+                <dt class="text-slate-400">Feedback: FN</dt>
+                <dd>{{ r.feedback_false_negative_count }}</dd>
+            </div>
+            <div class="flex justify-between" title="Investigator reports: system was correct">
+                <dt class="text-slate-400">Feedback: confirmed</dt>
+                <dd>{{ r.feedback_confirmed_count }}</dd>
+            </div>
+            <div class="border-t border-slate-700 pt-2 mt-2 flex justify-between" title="Combined score from −1 (consistently flagged) to +1 (consistently approved)">
+                <dt class="text-slate-300 font-semibold">Reputation</dt>
+                <dd class="font-bold {% if r.reputation_score > 0.2 %}text-emerald-400{% elif r.reputation_score < -0.2 %}text-rose-400{% else %}text-amber-400{% endif %}">
+                    {{ r.reputation_score|floatformat:2 }}
+                </dd>
+            </div>
+            <div class="text-xs text-slate-500 pt-2">Last updated {{ r.last_updated_at|timesince }} ago</div>
+        </dl>
+        {% endwith %}
+        {% else %}
+        <p class="text-sm text-slate-500">No reputation data yet (needs a verdict to accrue).</p>
+        {% endif %}
+    </div>
+
+    <div class="bg-white rounded-lg border border-slate-200 p-5 text-xs text-slate-600">
+        <div class="flex justify-between py-1"><span class="text-slate-500">First seen</span><span>{{ fingerprint.first_seen|date:"Y-m-d" }}</span></div>
+        <div class="flex justify-between py-1"><span class="text-slate-500">Last seen</span><span>{{ fingerprint.last_seen|date:"Y-m-d" }}</span></div>
+        <div class="flex justify-between py-1"><span class="text-slate-500">Kind</span><span class="font-mono">{{ fingerprint.kind }}</span></div>
+    </div>
+</div>
+
+</div>
+{% endblock %}

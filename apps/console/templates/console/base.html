@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-50">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>{% block title %}domain-infra{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: '#f0f7ff', 100: '#e0efff', 500: '#2563eb',
+                600: '#1d4ed8', 700: '#1e40af', 900: '#1e3a8a',
+              },
+            },
+            fontFamily: {
+              sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+              mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+            },
+          },
+        },
+      };
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body class="h-full font-sans text-slate-900">
+<div class="min-h-full flex">
+    <!-- Sidebar -->
+    <nav class="w-60 bg-slate-900 text-slate-200 flex flex-col">
+        <div class="px-6 py-5 border-b border-slate-800">
+            <div class="text-lg font-semibold text-white tracking-tight">domain-infra</div>
+            <div class="text-xs text-slate-400 mt-0.5">fraud intelligence</div>
+        </div>
+        <form action="{% url 'console:search' %}" method="GET" class="px-4 py-3 border-b border-slate-800">
+            <label class="block text-[10px] uppercase tracking-wider text-slate-500 mb-1">Search</label>
+            <input name="q" type="search" placeholder="domain, IP, email, hash…"
+                   class="w-full px-2 py-1.5 text-xs rounded bg-slate-800 border border-slate-700 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-brand-500" />
+        </form>
+        <div class="flex-1 py-3 text-sm">
+            <a href="{% url 'console:home' %}" class="block px-6 py-2 hover:bg-slate-800 {% if request.resolver_match.url_name == 'home' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">Dashboard</a>
+            <a href="{% url 'console:submissions-list' %}" class="block px-6 py-2 hover:bg-slate-800 {% if 'submissions' in request.path and request.resolver_match.url_name != 'submission-new' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">Submissions</a>
+            <a href="{% url 'console:submission-new' %}" class="block px-6 py-2 hover:bg-slate-800 {% if request.resolver_match.url_name == 'submission-new' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">New Submission</a>
+            <div class="mt-4 px-6 text-[10px] uppercase tracking-wider text-slate-500">Investigation</div>
+            <a href="{% url 'console:clusters' %}" class="block px-6 py-2 hover:bg-slate-800 {% if request.resolver_match.url_name == 'clusters' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">🌍 Clusters</a>
+            <a href="{% url 'console:threat-intel' %}" class="block px-6 py-2 hover:bg-slate-800 {% if request.resolver_match.url_name == 'threat-intel' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">🛡 Threat intel</a>
+            <div class="mt-4 px-6 text-[10px] uppercase tracking-wider text-slate-500">Configuration</div>
+            <a href="{% url 'console:scoring-rules' %}" class="block px-6 py-2 hover:bg-slate-800 {% if request.resolver_match.url_name == 'scoring-rules' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">Scoring rules</a>
+            <a href="{% url 'console:scoring-bands' %}" class="block px-6 py-2 hover:bg-slate-800 {% if request.resolver_match.url_name == 'scoring-bands' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">🎚 Scoring bands</a>
+            <a href="{% url 'console:ml-status' %}" class="block px-6 py-2 hover:bg-slate-800 {% if request.resolver_match.url_name == 'ml-status' %}bg-slate-800 text-white border-l-2 border-brand-500{% endif %}">🤖 ML classifier</a>
+            <div class="mt-4 px-6 text-[10px] uppercase tracking-wider text-slate-500">Admin</div>
+            <a href="/admin/" class="block px-6 py-2 hover:bg-slate-800">Full admin</a>
+        </div>
+        <div class="px-6 py-3 border-t border-slate-800 text-xs text-slate-400">
+            {% if org %}<div class="text-slate-200">{{ org.name }}</div><div>org: {{ org.slug }}</div>{% endif %}
+            {% if request.user.is_authenticated %}<div class="mt-1">{{ request.user }}</div>{% endif %}
+        </div>
+    </nav>
+
+    <!-- Main -->
+    <main class="flex-1 p-8 overflow-y-auto">
+        {% block main %}{% endblock %}
+    </main>
+</div>
+</body>
+</html>

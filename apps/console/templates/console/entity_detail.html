@@ -1,0 +1,224 @@
+{% extends "console/base.html" %}
+{% block title %}{{ kind_label }} · {{ display_value }} · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-sm mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <a href="{% url 'console:submissions-list' %}" class="text-brand-600 hover:underline">Submissions</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">{{ kind_label }}</span>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500 font-mono text-xs">{{ display_value|truncatechars:60 }}</span>
+</nav>
+
+<div class="flex items-start justify-between mb-6">
+    <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500">{{ kind_label }}</div>
+        <h1 class="text-3xl font-semibold break-all">{{ display_value }}</h1>
+    </div>
+    <div>
+        {% if entity.tag == 'good' %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">✓ Tagged GOOD</span>
+        {% elif entity.tag == 'bad' %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-rose-50 text-rose-700 border border-rose-200">✗ Tagged BAD</span>
+        {% elif entity.tag == 'do_not_score' %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-slate-100 text-slate-700 border border-slate-200">◌ Do Not Score</span>
+        {% else %}
+            <span class="inline-flex px-3 py-1 rounded-md text-sm font-medium bg-slate-50 text-slate-500 border border-slate-200">Untagged</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="grid grid-cols-3 gap-6">
+<div class="col-span-2 space-y-6">
+
+    <!-- Tag form -->
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Investigator tag</h2>
+        <p class="text-sm text-slate-600 mb-3">Manually mark this entity. Tags adjust the baseline score on every future submission involving it.</p>
+        {% if entity.tag_reason %}
+        <div class="bg-slate-50 rounded p-3 text-sm text-slate-700 mb-3">
+            <div class="text-xs text-slate-500 uppercase tracking-wider mb-1">Current reason</div>
+            {{ entity.tag_reason }}
+            {% if entity.tagged_by %}<div class="text-xs text-slate-500 mt-1">tagged by {{ entity.tagged_by }} at {{ entity.tagged_at|date:"Y-m-d H:i" }}</div>{% endif %}
+        </div>
+        {% endif %}
+        {% include "console/_tag_form.html" with tag_action_url=request.path|add:"tag/" next_url=request.path %}
+    </div>
+
+    <!-- SHARED: submissions with exactly this entity -->
+    <div class="bg-white rounded-lg border border-slate-200">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h2 class="text-sm font-medium">Submissions sharing this exact {{ kind_label|lower }}</h2>
+            <span class="text-xs text-slate-500">{{ shared_submissions|length }} row{{ shared_submissions|length|pluralize }}</span>
+        </div>
+        <table class="w-full text-sm">
+            <thead class="text-xs text-slate-500 uppercase bg-slate-50">
+                <tr>
+                    <th class="text-left font-medium px-5 py-2">When</th>
+                    <th class="text-left font-medium px-5 py-2">Domain</th>
+                    <th class="text-left font-medium px-5 py-2">Email</th>
+                    <th class="text-left font-medium px-5 py-2">Verdict</th>
+                    <th class="text-left font-medium px-5 py-2">SDAT score</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for s in shared_submissions %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:submission-detail' s.id %}'">
+                    <td class="px-5 py-2 text-slate-500 text-xs whitespace-nowrap">{{ s.created_at|date:"Y-m-d H:i" }}</td>
+                    <td class="px-5 py-2 font-mono text-xs">{{ s.domain|default:"—" }}</td>
+                    <td class="px-5 py-2 text-xs">{{ s.contact_email_raw|default:"—" }}</td>
+                    <td class="px-5 py-2 text-xs">
+                        {% if s.verdict %}
+                            {% if s.verdict.decision == 'approve' %}<span class="text-emerald-700">approve</span>
+                            {% elif s.verdict.decision == 'deny' %}<span class="text-rose-700">deny</span>
+                            {% else %}<span class="text-amber-700">review</span>{% endif %}
+                        {% else %}<span class="text-slate-400">{{ s.status }}</span>{% endif %}
+                    </td>
+                    <td class="px-5 py-2 font-mono text-xs">{% if s.verdict %}{{ s.verdict.score }}{% else %}—{% endif %}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="5" class="px-5 py-8 text-center text-slate-500 text-sm">No other submissions share this exact entity.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- CLOSE-BYS: similar entities grouped by heuristic -->
+    {% for label, entities in similar_groups %}
+    <div class="bg-white rounded-lg border border-slate-200">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h2 class="text-sm font-medium">Close-bys — {{ label }}</h2>
+            <span class="text-xs text-slate-500">{{ entities|length }} entit{{ entities|length|pluralize:"y,ies" }}</span>
+        </div>
+        <div class="divide-y divide-slate-100">
+        {% for e in entities %}
+            <a href="{% url 'console:entity-detail' entity_type e.id %}" class="flex items-center justify-between px-5 py-2 text-sm hover:bg-slate-50">
+                <span class="font-mono truncate">
+                    {% if entity_type == 'email' %}{{ e.normalized }}
+                    {% elif entity_type == 'name' %}{{ e.full }}
+                    {% elif entity_type == 'phone' %}{{ e.e164 }}
+                    {% elif entity_type == 'nameserver' or entity_type == 'mx-host' %}{{ e.hostname }}
+                    {% elif entity_type == 'registrar' %}{{ e.name }}
+                    {% elif entity_type == 'resolving-ip' %}{{ e.address }}
+                    {% endif %}
+                    {% if e.tag == 'good' %}<span class="ml-1 text-emerald-700 text-[10px] font-semibold">[GOOD]</span>
+                    {% elif e.tag == 'bad' %}<span class="ml-1 text-rose-700 text-[10px] font-semibold">[BAD]</span>{% endif %}
+                </span>
+                <span class="text-xs text-slate-500">approved={{ e.net_approved_count }} · flagged={{ e.net_flagged_count }}</span>
+            </a>
+        {% endfor %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="bg-slate-50 rounded-lg border border-slate-200 p-5 text-sm text-slate-500 text-center italic">
+        No close-by entities found. (Heuristics per type: same domain / phonetic hash / country code / /24 subnet / ASN / root domain.)
+    </div>
+    {% endfor %}
+
+</div>
+
+<!-- Right column: enrichment + reputation -->
+<div class="col-span-1 space-y-6">
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Details</h2>
+        <dl class="text-sm space-y-2">
+        {% if entity_type == 'email' %}
+            <div class="flex justify-between"><dt class="text-slate-500">Handle</dt><dd class="font-mono text-xs">{{ entity.handle }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Domain</dt><dd class="font-mono text-xs">{{ entity.domain }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Disposable</dt><dd>{% if entity.is_disposable %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Role account</dt><dd>{% if entity.is_role_account %}<span class="text-amber-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">MX reachable</dt><dd>{{ entity.mx_reachable }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Gravatar</dt><dd>{{ entity.has_gravatar }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Breaches</dt><dd>{{ entity.breach_count }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">First seen (ours)</dt><dd title="{{ entity.first_seen }}" class="text-xs">{{ entity.first_seen|timesince }} ago</dd></div>
+        {% if entity.ipqs_enriched_at %}
+            </dl>
+        </div>
+        {# IPQS-specific email enrichment panel — separate card below the details #}
+        <div class="bg-white rounded-lg border-2 {% if entity.ipqs_fraud_score >= 85 %}border-rose-300{% elif entity.ipqs_fraud_score >= 75 %}border-amber-300{% else %}border-slate-200{% endif %} p-5 mt-5">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-xs uppercase tracking-wider text-slate-500">IPQS email intel</h2>
+                <div class="text-3xl font-bold {% if entity.ipqs_fraud_score >= 85 %}text-rose-600{% elif entity.ipqs_fraud_score >= 75 %}text-amber-600{% else %}text-emerald-600{% endif %}">
+                    {{ entity.ipqs_fraud_score }}<span class="text-xs text-slate-500">/100</span>
+                </div>
+            </div>
+            <dl class="text-sm space-y-2">
+                <div class="flex justify-between"><dt class="text-slate-500">Overall score</dt>
+                    <dd class="font-semibold {% if entity.ipqs_overall_score == 4 %}text-emerald-700{% elif entity.ipqs_overall_score <= 2 %}text-rose-700{% else %}text-amber-700{% endif %}">
+                        {{ entity.ipqs_overall_score }}/4
+                        <span class="text-xs text-slate-500 ml-1">
+                            {% if entity.ipqs_overall_score == 4 %}verified
+                            {% elif entity.ipqs_overall_score == 3 %}catch-all server
+                            {% elif entity.ipqs_overall_score == 2 %}temp rejection
+                            {% elif entity.ipqs_overall_score == 1 %}DNS valid, unreachable
+                            {% elif entity.ipqs_overall_score == 0 %}invalid{% endif %}
+                        </span>
+                    </dd>
+                </div>
+                <div class="flex justify-between"><dt class="text-slate-500">SMTP score</dt><dd>{{ entity.ipqs_smtp_score }}/4</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Deliverability</dt><dd>{{ entity.ipqs_deliverability|default:"—" }}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Spam-trap</dt>
+                    <dd class="{% if entity.ipqs_spam_trap_score == 'high' %}text-rose-600 font-semibold{% endif %}">{{ entity.ipqs_spam_trap_score|default:"—" }}{% if entity.ipqs_spam_trap_score == 'high' %} ⚠{% endif %}</dd>
+                </div>
+                <div class="flex justify-between"><dt class="text-slate-500">Leaked / breached</dt>
+                    <dd class="{% if entity.ipqs_leaked %}text-rose-600 font-semibold{% endif %}">
+                        {% if entity.ipqs_leaked is None %}—{% elif entity.ipqs_leaked %}YES{% else %}no{% endif %}
+                    </dd>
+                </div>
+                <div class="flex justify-between"><dt class="text-slate-500">Recent abuse</dt><dd class="{% if entity.ipqs_recent_abuse %}text-rose-600 font-semibold{% endif %}">{% if entity.ipqs_recent_abuse is None %}—{% elif entity.ipqs_recent_abuse %}YES{% else %}no{% endif %}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Frequent complainer</dt><dd class="{% if entity.ipqs_frequent_complainer %}text-amber-600{% endif %}">{% if entity.ipqs_frequent_complainer is None %}—{% elif entity.ipqs_frequent_complainer %}yes{% else %}no{% endif %}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Catch-all</dt><dd>{% if entity.ipqs_catch_all is None %}—{% elif entity.ipqs_catch_all %}yes{% else %}no{% endif %}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Honeypot</dt><dd class="{% if entity.ipqs_honeypot %}text-rose-600 font-semibold{% endif %}">{% if entity.ipqs_honeypot is None %}—{% elif entity.ipqs_honeypot %}YES{% else %}no{% endif %}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Suspect</dt><dd class="{% if entity.ipqs_suspect %}text-amber-600{% endif %}">{% if entity.ipqs_suspect is None %}—{% elif entity.ipqs_suspect %}yes{% else %}no{% endif %}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">DNS valid</dt><dd>{% if entity.ipqs_dns_valid is None %}—{% elif entity.ipqs_dns_valid %}yes{% else %}no{% endif %}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Valid format</dt><dd>{% if entity.ipqs_valid is None %}—{% elif entity.ipqs_valid %}yes{% else %}no{% endif %}</dd></div>
+                {% if entity.ipqs_first_seen %}
+                <div class="flex justify-between"><dt class="text-slate-500">IPQS first seen</dt><dd class="text-xs" title="{{ entity.ipqs_first_seen }}">{{ entity.ipqs_first_seen|timesince }} ago</dd></div>
+                {% endif %}
+                {% if entity.ipqs_domain_age_days is not None %}
+                <div class="flex justify-between"><dt class="text-slate-500">Domain age (IPQS)</dt><dd>{{ entity.ipqs_domain_age_days }} days</dd></div>
+                {% endif %}
+                {% if entity.ipqs_suggested_domain %}
+                <div class="flex justify-between"><dt class="text-slate-500">Suggested fix</dt><dd class="font-mono text-xs">{{ entity.ipqs_suggested_domain }}</dd></div>
+                {% endif %}
+                <div class="flex justify-between"><dt class="text-slate-500">Enriched</dt><dd class="text-xs" title="{{ entity.ipqs_enriched_at }}">{{ entity.ipqs_enriched_at|timesince }} ago</dd></div>
+            </dl>
+        {% endif %}
+        {% elif entity_type == 'name' %}
+            <div class="flex justify-between"><dt class="text-slate-500">Normalized</dt><dd class="font-mono text-xs">{{ entity.normalized }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Phonetic</dt><dd class="font-mono text-xs">{{ entity.phonetic_hash|default:"—" }}</dd></div>
+        {% elif entity_type == 'phone' %}
+            <div class="flex justify-between"><dt class="text-slate-500">Country code</dt><dd class="font-mono">{{ entity.country_code }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Line type</dt><dd>{{ entity.line_type|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Carrier</dt><dd>{{ entity.carrier|default:"—" }}</dd></div>
+        {% elif entity_type == 'nameserver' or entity_type == 'mx-host' %}
+            <div class="flex justify-between"><dt class="text-slate-500">Hostname</dt><dd class="font-mono text-xs break-all">{{ entity.hostname }}</dd></div>
+        {% elif entity_type == 'registrar' %}
+            <div class="flex justify-between"><dt class="text-slate-500">Name</dt><dd class="font-mono text-xs">{{ entity.name }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">IANA ID</dt><dd>{{ entity.iana_id|default:"—" }}</dd></div>
+        {% elif entity_type == 'resolving-ip' %}
+            <div class="flex justify-between"><dt class="text-slate-500">Address</dt><dd class="font-mono text-xs">{{ entity.address }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Country</dt><dd>{{ entity.country|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">ASN</dt><dd class="font-mono text-xs">{{ entity.asn|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Hosting</dt><dd class="text-xs">{{ entity.hosting_provider|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">VPN</dt><dd>{% if entity.is_vpn %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Proxy</dt><dd>{% if entity.is_proxy %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Tor</dt><dd>{% if entity.is_tor %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+        {% endif %}
+        </dl>
+    </div>
+
+    <div class="bg-slate-900 text-slate-200 rounded-lg p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-400 mb-3">Reputation</h2>
+        <dl class="text-sm space-y-2">
+            <div class="flex justify-between"><dt class="text-slate-400">Net approved</dt><dd class="text-emerald-400">{{ entity.net_approved_count }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-400">Net flagged</dt><dd class="text-rose-400">{{ entity.net_flagged_count }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-400">First seen</dt><dd class="text-xs">{{ entity.first_seen|date:"Y-m-d" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-400">Last seen</dt><dd class="text-xs">{{ entity.last_seen|date:"Y-m-d" }}</dd></div>
+        </dl>
+    </div>
+</div>
+</div>
+{% endblock %}

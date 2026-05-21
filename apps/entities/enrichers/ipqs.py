@@ -96,6 +96,23 @@ def _upsert_asn(data: dict) -> ASN | None:
 # ----------------------------------------------------------------------
 
 
+def _extract_risk_signals(data: dict) -> dict:
+    """IPQS risk scoring fields (available on the free tier for most of these)."""
+    fraud_score = data.get("fraud_score")
+    try:
+        fraud_score = int(fraud_score) if fraud_score is not None else None
+    except (TypeError, ValueError):
+        fraud_score = None
+    # IPQS returns True/False booleans for these; null = not included in response
+    ra = data.get("recent_abuse")
+    bs = data.get("bot_status")
+    return {
+        "fraud_score": fraud_score,
+        "recent_abuse": bool(ra) if isinstance(ra, bool) else None,
+        "bot_status": bool(bs) if isinstance(bs, bool) else None,
+    }
+
+
 def apply_to_submitter_ip(sip: SubmitterIP, data: dict) -> None:
     asn = _upsert_asn(data)
     sip.country = (data.get("country_code") or "")[:2]
@@ -109,10 +126,16 @@ def apply_to_submitter_ip(sip: SubmitterIP, data: dict) -> None:
     sip.is_tor = bool(data.get("tor"))
     sip.is_datacenter = _is_datacenter(data)
     sip.asn = asn
+    risk = _extract_risk_signals(data)
+    sip.fraud_score = risk["fraud_score"]
+    sip.recent_abuse = risk["recent_abuse"]
+    sip.bot_status = risk["bot_status"]
+    sip.timezone = (data.get("timezone") or "")[:64]
     sip.save(
         update_fields=[
             "country", "region", "city", "latitude", "longitude",
             "is_vpn", "is_proxy", "is_tor", "is_datacenter", "asn",
+            "fraud_score", "recent_abuse", "bot_status", "timezone",
         ]
     )
 
@@ -126,10 +149,15 @@ def apply_to_ip_address(ip: IPAddress, data: dict) -> None:
     ip.is_tor = bool(data.get("tor"))
     ip.is_datacenter = _is_datacenter(data)
     ip.asn = asn
+    risk = _extract_risk_signals(data)
+    ip.fraud_score = risk["fraud_score"]
+    ip.recent_abuse = risk["recent_abuse"]
+    ip.bot_status = risk["bot_status"]
+    ip.timezone = (data.get("timezone") or "")[:64]
     ip.save(
         update_fields=[
             "country", "hosting_provider", "is_vpn", "is_proxy", "is_tor",
-            "is_datacenter", "asn",
+            "is_datacenter", "asn", "fraud_score", "recent_abuse", "bot_status", "timezone",
         ]
     )
 

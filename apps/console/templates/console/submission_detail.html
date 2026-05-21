@@ -1,0 +1,1033 @@
+{% extends "console/base.html" %}
+{% block title %}{{ submission.domain|default:"Submission" }} · domain-infra{% endblock %}
+
+{% block main %}
+
+{# Back-nav — preserves the submissions-list filters the investigator came from. #}
+{% if back_url %}
+<a href="{{ back_url }}" class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 mb-3">← Back to previous list</a>
+{% endif %}
+
+{# === KNOWN FRAUD-PATTERN SIREN — top of page if any matched. === #}
+{% if matched_patterns %}
+<div class="mb-5 rounded-lg shadow-lg overflow-hidden
+    {% if matched_patterns.0.severity == 'critical' %}bg-gradient-to-r from-rose-700 to-rose-600{% else %}bg-gradient-to-r from-amber-600 to-orange-500{% endif %} text-white">
+    <div class="px-6 py-4 flex items-start gap-4">
+        <div class="text-5xl leading-none animate-pulse">🚨</div>
+        <div class="flex-1">
+            <div class="text-[11px] uppercase tracking-[0.18em] font-semibold opacity-90">
+                Known fraud pattern{{ matched_patterns|length|pluralize }} matched
+            </div>
+            <div class="text-2xl font-bold leading-tight mt-1">
+                {{ matched_patterns|length }} high-risk pattern{{ matched_patterns|length|pluralize }} detected on this submission
+            </div>
+        </div>
+    </div>
+    <ul class="px-6 pb-4 space-y-1 text-sm">
+    {% for p in matched_patterns %}
+        <li class="flex items-start gap-2">
+            <span class="shrink-0 font-bold text-xs uppercase tracking-wider px-1.5 rounded
+                {% if p.severity == 'critical' %}bg-white/30{% else %}bg-white/20{% endif %}">{{ p.severity }}</span>
+            <span class="flex-1">
+                <strong>{{ p.name }}</strong>
+                {% if p.detail %}<span class="opacity-90">— {{ p.detail }}</span>{% endif %}
+            </span>
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="sticky top-0 -mx-8 -mt-8 px-8 pt-4 pb-3 bg-white border-b border-slate-200 z-20 mb-5">
+    <nav class="text-xs mb-2 flex items-center justify-between">
+        <div>
+            <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+            <span class="text-slate-400 mx-2">/</span>
+            <a href="{% url 'console:submissions-list' %}" class="text-brand-600 hover:underline">Submissions</a>
+            <span class="text-slate-400 mx-2">/</span>
+            <span class="text-slate-500 font-mono">{{ submission.id|slice:":8" }}…</span>
+        </div>
+        {% if has_ehawk_reference %}
+        <a href="#tab-reference" onclick="showTab('tab-reference');return false;" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100">
+            eHawk reference data available
+        </a>
+        {% endif %}
+    </nav>
+
+    <div class="flex items-center justify-between gap-4">
+        <div class="flex-1 min-w-0">
+            <h1 class="text-xl font-semibold truncate">{{ submission.domain|default:"(no domain)" }}</h1>
+            <div class="text-[11px] text-slate-500 font-mono truncate">{{ submission.id }}</div>
+        </div>
+
+        <div class="flex items-center gap-4 shrink-0">
+            {# Known-pattern siren badge next to score — visible even when scrolled past the top banner #}
+            {% if matched_patterns %}
+            <a href="#" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;"
+               class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold text-white
+                      {% if matched_patterns.0.severity == 'critical' %}bg-rose-600 hover:bg-rose-700{% else %}bg-amber-600 hover:bg-amber-700{% endif %} animate-pulse"
+               title="{{ matched_patterns|length }} known fraud pattern{{ matched_patterns|length|pluralize }} matched — click to jump to details">
+                🚨 {{ matched_patterns|length }} pattern{{ matched_patterns|length|pluralize }}
+            </a>
+            {% endif %}
+
+            {# Score #}
+            {% if submission.verdict %}
+            <div class="text-right">
+                <div class="text-[10px] uppercase tracking-wider text-slate-500">SDAT score</div>
+                <div class="text-2xl font-bold {% if submission.verdict.score >= 70 %}text-rose-600{% elif submission.verdict.score <= 30 %}text-emerald-600{% else %}text-amber-600{% endif %}">
+                    {{ submission.verdict.score }}
+                </div>
+            </div>
+            {% endif %}
+
+            {# Verdict badge #}
+            {% if submission.verdict %}
+                {% with effective=submission.verdict.effective_decision %}
+                {% if effective == 'approve' %}
+                    <span class="inline-flex items-center px-3 py-1.5 rounded-md font-semibold text-sm bg-emerald-50 text-emerald-700 border border-emerald-200">✓ APPROVE</span>
+                {% elif effective == 'deny' %}
+                    <span class="inline-flex items-center px-3 py-1.5 rounded-md font-semibold text-sm bg-rose-50 text-rose-700 border border-rose-200">✗ DENY</span>
+                {% else %}
+                    <span class="inline-flex items-center px-3 py-1.5 rounded-md font-semibold text-sm bg-amber-50 text-amber-700 border border-amber-200">◐ REVIEW</span>
+                {% endif %}
+                {% endwith %}
+            {% elif submission.status == 'queued' %}
+                <span class="inline-flex items-center px-3 py-1.5 rounded-md font-semibold text-sm bg-slate-100 text-slate-600 border border-slate-200">⏸ QUEUED</span>
+            {% elif submission.status == 'running' %}
+                <span class="inline-flex items-center px-3 py-1.5 rounded-md font-semibold text-sm bg-amber-50 text-amber-700 border border-amber-200" title="Pipeline started but no verdict — likely stuck. Re-run to retry.">⚠ STUCK (running)</span>
+            {% elif submission.status == 'failed' %}
+                <span class="inline-flex items-center px-3 py-1.5 rounded-md font-semibold text-sm bg-rose-50 text-rose-700 border border-rose-200">⚠ FAILED</span>
+            {% endif %}
+
+            {# Primary action: run pipeline whenever there's no verdict (queued / stuck-running / failed) #}
+            {% if not submission.verdict %}
+            <form method="POST" action="{% url 'console:submission-run' submission.id %}"
+                  onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerText='⏳ Running…'">
+                {% csrf_token %}
+                <button type="submit" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-md">
+                    ▶ Run SDAT
+                </button>
+            </form>
+            {% elif submission.verdict %}
+            <form method="POST" action="{% url 'console:submission-override' submission.id %}" class="flex items-center gap-1" title="Click the decision you think is correct. Match = confirm; different = correct. Unknown = skip in training.">
+                {% csrf_token %}
+                <input type="text" name="reason" placeholder="reason" value="{{ submission.verdict.human_override_reason }}"
+                       class="px-2 py-1 rounded border border-slate-300 text-xs w-32" title="Reason for your review label" />
+                <button name="decision" value="approve" type="submit" class="w-8 h-8 text-sm rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200" title="Label as APPROVE (confirm if system said approve)">✓</button>
+                <button name="decision" value="deny" type="submit" class="w-8 h-8 text-sm rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200" title="Label as DENY">✗</button>
+                <button name="decision" value="review" type="submit" class="w-8 h-8 text-sm rounded bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200" title="Label as REVIEW">◐</button>
+                <button name="decision" value="unknown" type="submit" class="w-8 h-8 text-sm rounded bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200" title="Can't tell — skip in training">?</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if submission.domain %}
+    <form method="POST" action="{% url 'console:threat-intel-add' %}" class="mt-2 inline-flex items-center gap-1.5"
+          onsubmit="return confirm('Flag {{ submission.domain }} as confirmed fraud?\n\nThis will:\n• Add the domain to threat intel (future submissions on this domain score +60)\n• Tag the email, name, phone, and submitter IP from THIS submission as bad so the actor can\\'t reuse them on a new domain\n• SKIP shared infrastructure (nameservers / MX / registrar / resolving IPs / ASN) so legit traffic on the same host isn\\'t punished');">
+        {% csrf_token %}
+        <input type="hidden" name="domain" value="{{ submission.domain }}" />
+        <input type="hidden" name="submission_id" value="{{ submission.id }}" />
+        <input type="hidden" name="category" value="scam" />
+        <input type="hidden" name="confidence" value="high" />
+        <input type="hidden" name="subcategory" value="community_reported" />
+        <input type="hidden" name="notes" value="Flagged from submission {{ submission.id }}" />
+        <input type="hidden" name="next" value="{{ request.path }}" />
+        <button type="submit" class="px-2.5 py-1 text-xs rounded bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200" title="Add domain to threat intel AND tag the user-specific attributes (email, name, phone, non-shared IP) as bad. Leaves shared infra untouched.">
+            🛡 Flag as known threat
+        </button>
+    </form>
+    {% endif %}
+
+    {% if submission.verdict.review_status %}
+    <div class="mt-2 text-xs px-3 py-1.5 rounded inline-flex items-center gap-2
+        {% if submission.verdict.review_status == 'confirmed' %}bg-emerald-50 text-emerald-900
+        {% elif submission.verdict.review_status == 'corrected' %}bg-rose-50 text-rose-900
+        {% else %}bg-slate-100 text-slate-700{% endif %}">
+        {% if submission.verdict.review_status == 'confirmed' %}
+            ✓ <strong>Confirmed</strong> — investigator agrees system call was correct
+        {% elif submission.verdict.review_status == 'corrected' %}
+            ↻ <strong>Corrected</strong> — system said <span class="font-mono">{{ submission.verdict.decision }}</span>, investigator says <strong class="uppercase">{{ submission.verdict.human_override_decision }}</strong>
+        {% elif submission.verdict.review_status == 'unknown' %}
+            ? <strong>Unknown</strong> — investigator reviewed but can't tell
+        {% endif %}
+        {% if submission.verdict.human_override_reason %}— {{ submission.verdict.human_override_reason }}{% endif %}
+        <span class="text-slate-500">· {{ submission.verdict.human_override_by }} · {{ submission.verdict.human_override_at|date:"Y-m-d H:i" }}</span>
+    </div>
+    {% endif %}
+</div>
+
+
+<div class="flex gap-0 text-sm border-b border-slate-200 mb-6">
+    <button class="tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="tab-overview">Overview</button>
+    <button class="tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="tab-signals">SDAT Signals</button>
+    <button class="tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="tab-entities">Entities &amp; Tags</button>
+    <button class="tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="tab-network">Network</button>
+    {% if has_ehawk_reference %}
+    <button class="tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="tab-reference">
+        <span class="inline-flex items-center gap-1.5">eHawk Reference <span class="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full"></span></span>
+    </button>
+    {% endif %}
+</div>
+
+
+<div id="tab-overview" class="tab-panel space-y-4">
+
+    {# === AREA RISK SCORES — eHawk-style per-attribute contribution table === #}
+    {% if area_rows %}
+    <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden -mx-1">
+        <div class="px-4 py-2.5 border-b border-slate-700 flex items-center">
+            <span class="text-slate-100 text-sm font-semibold">🏷 Area Risk Scores</span>
+        </div>
+        <table class="w-full text-sm">
+            <thead class="bg-slate-900 text-[10px] uppercase tracking-wider text-slate-400">
+                <tr>
+                    <th class="text-left font-medium px-4 py-2 w-48">Area</th>
+                    <th class="text-left font-medium px-4 py-2">Value</th>
+                    <th class="text-center font-medium px-4 py-2 w-24">Score</th>
+                    <th class="text-left font-medium px-4 py-2">Details</th>
+                    <th class="text-right font-medium px-4 py-2 w-20">Tag</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-700">
+            {% for row in area_rows %}
+                <tr class="hover:bg-slate-700/50 text-slate-200">
+                    <td class="px-4 py-2.5 font-medium text-slate-300">{{ row.area }}</td>
+                    <td class="px-4 py-2.5 font-mono text-xs">
+                        {% if row.url %}<a href="{{ row.url }}" class="text-sky-400 hover:underline">{{ row.value }}</a>
+                        {% else %}{{ row.value }}{% endif %}
+                    </td>
+                    <td class="px-4 py-2.5 text-center">
+                        {% if row.score > 0 %}
+                            <span class="inline-block px-2 py-0.5 rounded bg-rose-600 text-white text-xs font-mono font-semibold">+{{ row.score }}</span>
+                        {% elif row.score < 0 %}
+                            <span class="inline-block px-2 py-0.5 rounded bg-emerald-600 text-white text-xs font-mono font-semibold">{{ row.score }}</span>
+                        {% else %}
+                            <span class="inline-block px-2 py-0.5 rounded bg-slate-600 text-slate-200 text-xs font-mono">0</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-2.5 text-xs text-slate-400">
+                        {% for d in row.details %}<div>{{ d }}</div>{% endfor %}
+                    </td>
+                    <td class="px-4 py-2.5 text-right">
+                        {% if row.tag == 'bad' %}<span class="inline-block px-1.5 py-0.5 text-[10px] rounded bg-rose-900 text-rose-200 border border-rose-700">BAD</span>
+                        {% elif row.tag == 'good' %}<span class="inline-block px-1.5 py-0.5 text-[10px] rounded bg-emerald-900 text-emerald-200 border border-emerald-700">GOOD</span>
+                        {% elif row.tag == 'do_not_score' %}<span class="inline-block px-1.5 py-0.5 text-[10px] rounded bg-slate-700 text-slate-300 border border-slate-600">DNS</span>
+                        {% else %}<span class="text-slate-600 text-xs">—</span>{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {# === STREAMLIT-MATCH: 2-COLUMN INDIVIDUAL DOMAIN DETAILS === #}
+    {% if submission.verdict %}
+    <div class="grid grid-cols-12 gap-4">
+        {# LEFT: risk score + metadata summary card #}
+        <div class="col-span-3 space-y-3">
+            <div class="rounded-lg p-5 border-2
+                {% if submission.verdict.effective_decision == 'deny' %}bg-rose-50 border-rose-300
+                {% elif submission.verdict.effective_decision == 'approve' %}bg-emerald-50 border-emerald-300
+                {% else %}bg-amber-50 border-amber-300{% endif %}">
+                <div class="text-3xl font-bold
+                    {% if submission.verdict.effective_decision == 'deny' %}text-rose-700
+                    {% elif submission.verdict.effective_decision == 'approve' %}text-emerald-700
+                    {% else %}text-amber-700{% endif %}">
+                    {% if submission.verdict.effective_decision == 'deny' %}🚫 DENY
+                    {% elif submission.verdict.effective_decision == 'approve' %}✅ APPROVE
+                    {% else %}◐ REVIEW{% endif %}
+                </div>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
+                <div>
+                    <div class="text-[10px] uppercase tracking-wider text-slate-500">Risk Score</div>
+                    <div class="text-4xl font-bold text-slate-900">{{ submission.verdict.score }}</div>
+                </div>
+                <div>
+                    <div class="text-[10px] uppercase tracking-wider text-slate-500">Risk Level</div>
+                    <div class="text-xl font-semibold
+                        {% if domain_meta.risk_level == 'SEVERE' %}text-rose-700
+                        {% elif domain_meta.risk_level == 'HIGH' %}text-amber-700
+                        {% elif domain_meta.risk_level == 'MEDIUM' %}text-amber-600
+                        {% else %}text-emerald-700{% endif %}">{{ domain_meta.risk_level }}</div>
+                </div>
+                {% if domain_meta.asn %}
+                <div>
+                    <div class="text-[10px] uppercase tracking-wider text-slate-500">ASN</div>
+                    <div class="text-xs text-slate-700 font-mono">{{ domain_meta.asn }}</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {# RIGHT: summary banner + penalties + all issues #}
+        <div class="col-span-9 space-y-3">
+            {# Summary banner #}
+            <div class="bg-sky-50 border border-sky-200 rounded-lg p-4">
+                <div class="text-[10px] uppercase tracking-wider text-sky-700 mb-1">Summary</div>
+                <div class="text-sm text-slate-800 leading-relaxed">🚫 {{ submission.verdict.summary|default:"(no summary)" }}</div>
+            </div>
+
+            {# PENALTIES — only weighted signals #}
+            {% if penalties %}
+            <details open class="bg-white border border-slate-200 rounded-lg">
+                <summary class="cursor-pointer px-4 py-2.5 font-semibold text-sm text-rose-900 bg-rose-50 rounded-t-lg">
+                    🚫 Penalties ({{ net_score_pre_clamp }} pts)
+                </summary>
+                <div class="divide-y divide-slate-100">
+                {% for p in penalties %}
+                    <div class="flex items-center gap-3 px-4 py-2 text-sm">
+                        <span class="text-rose-600 shrink-0">⚡</span>
+                        <code class="text-xs text-slate-800 font-mono">{{ p.signal }}</code>
+                        <span class="text-rose-700 font-mono font-semibold ml-1">+{{ p.weight }}</span>
+                        {% if p.value and p.value != True %}<span class="text-xs text-slate-500 ml-2 truncate">— {{ p.value|stringformat:"s"|truncatechars:100 }}</span>{% endif %}
+                    </div>
+                {% endfor %}
+                </div>
+                {% if clamp_applied %}
+                <div class="px-4 py-2 text-xs text-slate-500 italic bg-slate-50 rounded-b-lg">Net score: {{ net_score_pre_clamp }} → clamped to 100</div>
+                {% endif %}
+            </details>
+            {% endif %}
+
+            {# ALL ISSUES — weighted + neutral #}
+            {% if all_issues %}
+            <details class="bg-white border border-slate-200 rounded-lg">
+                <summary class="cursor-pointer px-4 py-2.5 font-semibold text-sm text-slate-700 bg-slate-50 rounded-t-lg">
+                    📋 All Issues ({{ all_issues|length }})
+                </summary>
+                <div class="divide-y divide-slate-100">
+                {% for i in all_issues %}
+                    <div class="flex items-start gap-3 px-4 py-2 text-sm">
+                        {% if i.weight > 0 %}
+                            <span class="text-[11px] font-mono font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 shrink-0">+{{ i.weight }}</span>
+                        {% elif i.weight < 0 %}
+                            <span class="text-[11px] font-mono font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 shrink-0">{{ i.weight }}</span>
+                        {% else %}
+                            <span class="text-[11px] font-mono text-slate-400 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 shrink-0">0</span>
+                        {% endif %}
+                        <span class="text-slate-800 flex-1">{{ i.text }}</span>
+                    </div>
+                {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+        </div>
+    </div>
+
+    {# Email auth + metadata strip (matches Streamlit layout) #}
+    <div class="bg-white border border-slate-200 rounded-lg p-4">
+        <div class="grid grid-cols-3 gap-6 mb-4">
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-500">SPF</div>
+                <div class="text-lg">{% if domain_meta.spf_valid %}✅{% else %}❌{% endif %}</div>
+            </div>
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-500">DKIM</div>
+                <div class="text-lg">{% if domain_meta.dkim_valid %}✅{% else %}❌{% endif %}</div>
+            </div>
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-500">DMARC</div>
+                <div class="text-lg">{% if domain_meta.dmarc_valid %}✅{% else %}❌{% endif %}</div>
+            </div>
+        </div>
+        <dl class="grid grid-cols-1 gap-1 text-sm border-t border-slate-100 pt-3">
+            {% if domain_meta.domain_age_days %}
+            <div class="flex gap-2"><dt class="text-slate-500 font-medium min-w-[120px]">Domain Age:</dt><dd>{{ domain_meta.domain_age_days }} days{% if domain_meta.domain_created %} (created {{ domain_meta.domain_created|stringformat:"s"|slice:":10" }}){% endif %}</dd></div>
+            {% endif %}
+            {% if domain_meta.page_title %}
+            <div class="flex gap-2"><dt class="text-slate-500 font-medium min-w-[120px]">Page Title:</dt><dd class="font-mono text-xs">"{{ domain_meta.page_title|truncatechars:140 }}"</dd></div>
+            {% endif %}
+            {% if domain_meta.mx_provider %}
+            <div class="flex gap-2"><dt class="text-slate-500 font-medium min-w-[120px]">MX Provider:</dt><dd class="font-mono text-xs">{{ domain_meta.mx_provider|stringformat:"s"|truncatechars:140 }}</dd></div>
+            {% endif %}
+            {% if domain_meta.ns_records %}
+            <div class="flex gap-2"><dt class="text-slate-500 font-medium min-w-[120px]">NS Records:</dt><dd class="font-mono text-xs">{{ domain_meta.ns_records|stringformat:"s"|truncatechars:200 }}</dd></div>
+            {% endif %}
+        </dl>
+    </div>
+    {% endif %}
+
+    {# --- end Streamlit 2-col block; below is our original overview content --- #}
+
+    {# Critical indicators rise to the top when present #}
+    {% if critical_indicators %}
+    <div class="bg-rose-50 border-2 border-rose-300 rounded-lg p-5">
+        <h2 class="text-xs uppercase tracking-wider text-rose-700 font-semibold mb-3">⚠ Critical SDAT indicators ({{ critical_indicators|length }})</h2>
+        <ul class="space-y-2">
+        {% for ci in critical_indicators %}
+            <li class="flex items-start gap-3 text-sm">
+                <span class="inline-flex items-center justify-center px-2 h-6 rounded bg-rose-600 text-white shrink-0 text-xs font-bold">+{{ ci.weight }}</span>
+                <div class="flex-1">
+                    <div class="font-medium text-rose-900">{{ ci.label }}</div>
+                    <div class="text-xs text-rose-700 font-mono">{{ ci.key }} = {{ ci.value|stringformat:"s"|truncatechars:80 }} <span class="text-rose-500">· {{ ci.category }}</span></div>
+                </div>
+            </li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {# No-verdict empty state #}
+    {% if not submission.verdict %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center">
+        <div class="text-4xl mb-2">
+            {% if submission.status == 'running' %}⚠{% elif submission.status == 'failed' %}⚠{% else %}⏸{% endif %}
+        </div>
+        <div class="text-sm font-medium text-slate-900">
+            {% if submission.status == 'running' %}Stuck in running state
+            {% elif submission.status == 'failed' %}Pipeline failed
+            {% else %}No SDAT verdict yet{% endif %}
+        </div>
+        <div class="text-xs text-slate-500 mt-1 mb-4">
+            {% if submission.status == 'running' %}The pipeline started but never finished (server killed, crashed, or long-running analyzer). Re-run to retry.
+            {% elif submission.status == 'failed' %}{{ submission.error|default:"Check server logs for details." }}
+            {% else %}Pipeline hasn't run on this submission.{% endif %}
+        </div>
+        <form method="POST" action="{% url 'console:submission-run' submission.id %}"
+              onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerText='⏳ Running SDAT (~20s)…'">
+            {% csrf_token %}
+            <button type="submit" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-md">▶ {% if submission.status == 'running' or submission.status == 'failed' %}Retry SDAT analysis{% else %}Run SDAT analysis now{% endif %}</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {# Reasons #}
+    {% if submission.verdict.reasons %}
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Reasons</h2>
+        <ul class="space-y-2">
+        {% for r in submission.verdict.reasons %}
+            <li class="flex items-start gap-3 text-sm">
+                {% if r.code == 'TAGGED_GOOD' %}
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-100 text-emerald-700 shrink-0" title="Investigator tag GOOD">👤</span>
+                {% elif r.code == 'TAGGED_BAD' %}
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-rose-100 text-rose-700 shrink-0" title="Investigator tag BAD">👤</span>
+                {% elif r.code == 'ANALYZER_POSITIVE' %}
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-100 text-emerald-700 shrink-0 font-bold">✓</span>
+                {% elif r.code == 'ANALYZER_NEGATIVE' %}
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-rose-100 text-rose-700 shrink-0 font-bold">✗</span>
+                {% elif r.weight and r.weight > 0 %}
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-rose-100 text-rose-700 shrink-0 font-bold">✗</span>
+                {% elif r.weight and r.weight < 0 %}
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-100 text-emerald-700 shrink-0 font-bold">✓</span>
+                {% else %}
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-slate-100 text-slate-700 shrink-0">•</span>
+                {% endif %}
+                <div class="flex-1">
+                    <div>{{ r.description }}</div>
+                    <div class="font-mono text-xs text-slate-500">{{ r.code }}{% if r.weight %} · weight {{ r.weight }}{% endif %}{% if r.rule_name %} · rule: {{ r.rule_name }}{% endif %}</div>
+                </div>
+            </li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {# Submission raw inputs #}
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Submission inputs</h2>
+        <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div class="flex justify-between"><dt class="text-slate-500">Domain</dt><dd class="font-mono text-sm">{{ submission.domain|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Contact email</dt><dd class="font-mono text-sm">{% if submission.contact_email %}<a href="{% url 'console:entity-detail' 'email' submission.contact_email.id %}" class="text-brand-600 hover:underline">{{ submission.contact_email_raw }}</a>{% else %}{{ submission.contact_email_raw|default:"—" }}{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Contact name</dt><dd>{% if submission.contact_name %}<a href="{% url 'console:entity-detail' 'name' submission.contact_name.id %}" class="text-brand-600 hover:underline">{{ submission.contact_name_raw }}</a>{% else %}{{ submission.contact_name_raw|default:"—" }}{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Contact phone</dt><dd class="font-mono">{% if submission.contact_phone %}<a href="{% url 'console:entity-detail' 'phone' submission.contact_phone.id %}" class="text-brand-600 hover:underline">{{ submission.contact_phone_raw }}</a>{% else %}{{ submission.contact_phone_raw|default:"—" }}{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Submitter IP</dt><dd class="font-mono">{% if submission.submitter_ip_raw %}<a href="{% url 'console:ip-detail' submission.submitter_ip_raw %}" class="text-brand-600 hover:underline">{{ submission.submitter_ip_raw }}</a>{% else %}—{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">External ref</dt><dd class="font-mono text-xs">{{ submission.external_ref|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Device fingerprint</dt><dd class="font-mono text-xs truncate max-w-[200px]" title="{{ submission.device_fingerprint_raw }}">{{ submission.device_fingerprint_raw|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Created</dt><dd class="text-xs">{{ submission.created_at|date:"Y-m-d H:i" }}</dd></div>
+        </dl>
+    </div>
+</div>
+
+
+<div id="tab-signals" class="tab-panel hidden space-y-4">
+
+    {# === Config-checker sections — port of the SDAT Streamlit layout === #}
+    {% if config_sections %}
+    <div class="space-y-3">
+        <div class="text-xs uppercase tracking-wider text-slate-500 flex items-center gap-2">
+            <span>Config-checker sections</span>
+            <span class="text-slate-400 normal-case font-normal">— per-section breakdown matching the Streamlit layout</span>
+        </div>
+        {% for sec in config_sections %}
+        <details {% if sec.expanded %}open{% endif %} class="rounded-lg border
+            {% if sec.severity == 'high' %}border-rose-300 bg-rose-50
+            {% elif sec.severity == 'medium' %}border-amber-300 bg-amber-50
+            {% elif sec.fire %}border-slate-300 bg-white
+            {% else %}border-slate-200 bg-slate-50{% endif %}">
+            <summary class="cursor-pointer px-4 py-2.5 flex items-center gap-2 text-sm
+                {% if sec.severity == 'high' %}text-rose-900 font-semibold
+                {% elif sec.severity == 'medium' %}text-amber-900 font-semibold
+                {% else %}text-slate-800{% endif %}">
+                <span class="text-lg">{{ sec.emoji }}</span>
+                <span>{{ sec.title }}</span>
+                {% if sec.fire %}
+                <span class="ml-auto text-[10px] uppercase tracking-wider
+                    {% if sec.severity == 'high' %}bg-rose-600 text-white
+                    {% elif sec.severity == 'medium' %}bg-amber-500 text-white
+                    {% else %}bg-slate-400 text-white{% endif %} rounded px-1.5 py-0.5">FIRED</span>
+                {% endif %}
+            </summary>
+            <div class="px-4 pb-4 pt-1 bg-white rounded-b-lg border-t {% if sec.severity == 'high' %}border-rose-200{% elif sec.severity == 'medium' %}border-amber-200{% else %}border-slate-200{% endif %}">
+                {% if sec.metrics %}
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 my-3">
+                    {% for m in sec.metrics %}
+                    <div class="border border-slate-200 rounded p-2 bg-slate-50">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                            <span>{{ m.icon }}</span>
+                            <span>{{ m.label }}</span>
+                        </div>
+                        <div class="text-sm font-mono font-semibold mt-0.5">{{ m.value }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if sec.body %}
+                <div class="space-y-2 text-sm">
+                    {% for kind, content in sec.body %}
+                    {% if kind == 'error' %}
+                    <div class="px-3 py-2 bg-rose-50 border border-rose-200 rounded text-rose-900 text-sm">{{ content }}</div>
+                    {% elif kind == 'warn' %}
+                    <div class="px-3 py-2 bg-amber-50 border border-amber-200 rounded text-amber-900 text-sm">{{ content }}</div>
+                    {% elif kind == 'info' %}
+                    <div class="px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-700 text-sm">{{ content }}</div>
+                    {% elif kind == 'code' %}
+                    <pre class="px-3 py-2 bg-slate-900 text-slate-100 rounded text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{{ content }}</pre>
+                    {% elif kind == 'caption' %}
+                    <div class="text-xs text-slate-500 italic">{{ content }}</div>
+                    {% elif kind == 'list' %}
+                    <ul class="text-xs font-mono text-slate-700 list-disc list-inside space-y-0.5">
+                        {% for item in content %}<li>{{ item }}</li>{% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </details>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# === SDAT's own per-signal score contributions + triggered signals === #}
+    {% if sdat_score_contributions or sdat_signals_triggered %}
+    <div class="bg-white rounded-lg border-2 border-slate-300 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">
+            SDAT score contributions
+            <span class="text-slate-400 normal-case font-normal">— SDAT's own per-signal breakdown from this scan</span>
+        </h2>
+        {% if sdat_score_contributions %}
+        <table class="w-full text-sm mb-3">
+            <thead class="text-[10px] text-slate-500 uppercase">
+                <tr><th class="text-left pb-1 w-16">Weight</th><th class="text-left pb-1">Signal</th></tr>
+            </thead>
+            <tbody class="font-mono text-xs">
+            {% for c in sdat_score_contributions %}
+                <tr class="border-t border-slate-100">
+                    <td class="py-1">
+                        {% if c.kind == 'negative' %}
+                            <span class="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-semibold" title="Positive weight = BAD signal, adds to risk score">+{{ c.weight }}</span>
+                        {% elif c.kind == 'positive' %}
+                            <span class="inline-block px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold" title="Negative weight = GOOD signal, pulls score down">{{ c.weight }}</span>
+                        {% else %}
+                            <span class="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">0</span>
+                        {% endif %}
+                    </td>
+                    <td class="py-1 text-slate-700">{{ c.signal }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if sdat_signals_triggered %}
+        <div class="pt-3 border-t border-slate-200">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Signals triggered ({{ sdat_signals_triggered|length }})</div>
+            <div class="flex flex-wrap gap-1">
+            {% for sig in sdat_signals_triggered %}
+                <span class="inline-block px-1.5 py-0.5 text-[10px] font-mono rounded bg-slate-100 text-slate-700 border border-slate-200">⚡ {{ sig }}</span>
+            {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if submission.domain_scan %}
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Key domain-scan signals</h2>
+        <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div class="flex justify-between"><dt class="text-slate-500">Risk score</dt><dd class="font-mono">{{ submission.domain_scan.risk_score }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Risk level</dt><dd class="font-mono">{{ submission.domain_scan.risk_level }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Recommendation</dt><dd class="font-mono">{{ submission.domain_scan.recommendation }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Registrar</dt><dd class="font-mono text-xs">{{ submission.domain_scan.registrar|default:"—" }}</dd></div>
+            {% with raw=submission.domain_scan.raw_result %}
+            <div class="flex justify-between"><dt class="text-slate-500">A record</dt><dd class="font-mono text-xs">{{ raw.ip_address|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Hosting ASN</dt><dd class="font-mono text-xs">{{ raw.asn_display|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">CDN</dt><dd class="font-mono text-xs">{{ raw.cdn_provider|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">SPF</dt><dd class="font-mono text-xs">{% if raw.spf_exists %}✓ {{ raw.spf_record|truncatechars:40 }}{% else %}✗ missing{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">DMARC</dt><dd class="font-mono text-xs">{% if raw.dmarc_exists %}{{ raw.dmarc_policy }}{% else %}✗ missing{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">DKIM</dt><dd class="font-mono text-xs">{% if raw.dkim_exists %}✓{% else %}✗{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">HTTPS</dt><dd class="font-mono text-xs">{% if raw.https_valid %}✓ valid{% else %}✗ invalid{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">MX</dt><dd class="font-mono text-xs">{% if raw.mx_exists %}✓{% else %}✗{% endif %}</dd></div>
+            {% endwith %}
+        </dl>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center">
+        <div class="text-sm text-slate-600 mb-4">
+            {% if submission.status == 'running' %}Pipeline was started but never completed. Stuck in "running" — kick it off again.
+            {% elif submission.status == 'failed' %}SDAT scan failed: <span class="font-mono">{{ submission.error|default:"no details" }}</span>
+            {% else %}No SDAT scan run yet.{% endif %}
+        </div>
+        <form method="POST" action="{% url 'console:submission-run' submission.id %}"
+              onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerText='⏳ Running (~20s)…'">
+            {% csrf_token %}
+            <button type="submit" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-md">▶ {% if submission.status == 'running' or submission.status == 'failed' %}Retry SDAT analysis{% else %}Run SDAT analysis{% endif %}</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {# Full SDAT scoring breakdown — expanded by default when present #}
+    {% if scoring_breakdown %}
+    <details class="bg-white rounded-lg border border-slate-200" open>
+        <summary class="cursor-pointer px-5 py-3 text-xs uppercase tracking-wider text-slate-500 hover:bg-slate-50">
+            SDAT scoring breakdown — every weighted signal that fired ({{ scoring_breakdown|length }}) ▾
+        </summary>
+        <div class="p-5 pt-0">
+            <table class="w-full text-xs">
+                <thead class="text-slate-500 uppercase text-[10px]">
+                    <tr>
+                        <th class="text-left py-1">Weight</th>
+                        <th class="text-left py-1">Signal</th>
+                        <th class="text-left py-1">Value</th>
+                    </tr>
+                </thead>
+                <tbody class="font-mono">
+                {% for item in scoring_breakdown %}
+                    <tr class="border-t border-slate-100">
+                        <td class="py-1 pr-3">
+                            {% if item.weight > 0 %}
+                                <span class="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">+{{ item.weight }}</span>
+                            {% else %}
+                                <span class="inline-block px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">{{ item.weight }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-1 pr-3">{{ item.signal }}</td>
+                        <td class="py-1 text-slate-600 truncate max-w-[280px]" title="{{ item.value }}">{{ item.value|stringformat:"s"|truncatechars:80 }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </details>
+    {% endif %}
+
+    {# Full raw_result grouped by category — categories always visible, no inner clicks. #}
+    {% if all_indicators_grouped %}
+    <details class="bg-white rounded-lg border border-slate-200" open>
+        <summary class="cursor-pointer px-5 py-3 text-xs uppercase tracking-wider text-slate-500 hover:bg-slate-50 border-b border-slate-100">
+            All SDAT analyzer indicators ({{ all_indicators|length }} fields across {{ all_indicators_grouped|length }} categories) ▾
+        </summary>
+        <div class="p-5 pt-3 space-y-5">
+        {% for category, items in all_indicators_grouped.items %}
+            <div>
+                <h3 class="text-xs uppercase tracking-wider text-slate-600 font-semibold pb-1 mb-2 border-b border-slate-200">
+                    {{ category }}
+                    <span class="text-slate-400 font-normal ml-1">({{ items|length }})</span>
+                </h3>
+                <div class="space-y-1 text-xs font-mono">
+                {% for item in items %}
+                    <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-4 py-1 border-b border-slate-50">
+                        <dt class="text-slate-500 flex items-start gap-1 min-w-0 leading-snug">
+                            {% if item.weight %}
+                                {% if item.kind == 'negative' %}
+                                    <span class="shrink-0 inline-block px-1 text-[10px] rounded bg-rose-100 text-rose-800 font-semibold" title="Bad signal — adds {{ item.weight }} to risk score">+{{ item.weight }}</span>
+                                {% elif item.kind == 'positive' %}
+                                    <span class="shrink-0 inline-block px-1 text-[10px] rounded bg-emerald-100 text-emerald-800 font-semibold" title="Good signal — reduces risk score">{{ item.weight }}</span>
+                                {% endif %}
+                            {% elif item.triggered %}
+                                <span class="shrink-0 inline-block px-1 text-[10px] rounded bg-amber-100 text-amber-800" title="Signal fired but weight is informational">⚡</span>
+                            {% endif %}
+                            <span class="break-all">{{ item.key }}</span>
+                        </dt>
+                        <dd class="text-left leading-snug">
+                            {% if item.formatted.kind == 'list' %}
+                                <ul class="space-y-0.5">
+                                {% for p in item.formatted.items %}
+                                    <li class="break-all flex gap-1.5"><span class="text-slate-300">·</span><span>{{ p }}</span></li>
+                                {% endfor %}
+                                </ul>
+                            {% elif item.formatted.kind == 'dict' %}
+                                <div class="space-y-0.5">
+                                {% for k, v in item.formatted.pairs %}
+                                    <div class="flex gap-2 break-all">
+                                        <span class="text-slate-400">{{ k }}:</span>
+                                        <span class="{% if v|stringformat:'s'|slice:':1' == '-' %}text-emerald-700{% elif v|stringformat:'s'|first == '+' %}text-rose-700{% endif %}">{{ v }}</span>
+                                    </div>
+                                {% endfor %}
+                                </div>
+                            {% elif item.formatted.kind == 'bool' %}
+                                {% if item.formatted.value %}<span class="text-emerald-700">true</span>{% else %}<span class="text-slate-500">false</span>{% endif %}
+                            {% else %}
+                                <span class="break-all">{{ item.formatted.value }}</span>
+                            {% endif %}
+                        </dd>
+                    </div>
+                {% endfor %}
+                </div>
+            </div>
+        {% endfor %}
+        </div>
+    </details>
+    {% endif %}
+</div>
+
+
+<div id="tab-entities" class="tab-panel hidden">
+    <div class="grid grid-cols-2 gap-4">
+
+    {% if submission.contact_email %}
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2">Contact email</h3>
+        {% with ce=submission.contact_email %}
+        <div class="text-sm font-mono mb-3">
+            <a href="{% url 'console:entity-detail' 'email' ce.id %}" class="text-brand-600 hover:underline">{{ ce.normalized }}</a>
+            {% if ce.tag %}<span class="ml-1 text-[10px] font-semibold {% if ce.tag == 'good' %}text-emerald-700{% elif ce.tag == 'bad' %}text-rose-700{% else %}text-slate-500{% endif %}">[{{ ce.tag|upper }}]</span>{% endif %}
+        </div>
+
+        {# IPQS Email Validation block — only if enriched #}
+        {% if ce.ipqs_enriched_at %}
+        <div class="mb-3 p-2 rounded border {% if ce.ipqs_fraud_score >= 85 %}bg-rose-50 border-rose-200{% elif ce.ipqs_fraud_score >= 75 %}bg-amber-50 border-amber-200{% else %}bg-slate-50 border-slate-200{% endif %}">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] uppercase tracking-wider text-slate-500">IPQS fraud score</span>
+                <span class="text-lg font-bold {% if ce.ipqs_fraud_score >= 85 %}text-rose-600{% elif ce.ipqs_fraud_score >= 75 %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ ce.ipqs_fraud_score }}/100</span>
+            </div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+                <span class="text-slate-500">Overall</span>
+                <span class="text-right font-semibold {% if ce.ipqs_overall_score == 4 %}text-emerald-700{% elif ce.ipqs_overall_score <= 2 %}text-rose-700{% else %}text-amber-700{% endif %}">
+                    {{ ce.ipqs_overall_score }}/4 {% if ce.ipqs_overall_score == 4 %}verified{% elif ce.ipqs_overall_score == 3 %}catch-all{% elif ce.ipqs_overall_score == 2 %}temp-reject{% elif ce.ipqs_overall_score == 1 %}dns-only{% elif ce.ipqs_overall_score == 0 %}invalid{% endif %}
+                </span>
+                <span class="text-slate-500">Deliverability</span><span class="text-right">{{ ce.ipqs_deliverability|default:"—" }}</span>
+                <span class="text-slate-500">Spam-trap</span>
+                <span class="text-right {% if ce.ipqs_spam_trap_score == 'high' %}text-rose-600 font-semibold{% endif %}">{{ ce.ipqs_spam_trap_score|default:"—" }}</span>
+                <span class="text-slate-500">Leaked</span><span class="text-right {% if ce.ipqs_leaked %}text-rose-600 font-semibold{% endif %}">{% if ce.ipqs_leaked is None %}—{% elif ce.ipqs_leaked %}YES{% else %}no{% endif %}</span>
+                <span class="text-slate-500">Recent abuse</span><span class="text-right {% if ce.ipqs_recent_abuse %}text-rose-600 font-semibold{% endif %}">{% if ce.ipqs_recent_abuse is None %}—{% elif ce.ipqs_recent_abuse %}YES{% else %}no{% endif %}</span>
+                <span class="text-slate-500">Catch-all</span><span class="text-right {% if ce.ipqs_catch_all %}text-amber-600{% endif %}">{% if ce.ipqs_catch_all is None %}—{% elif ce.ipqs_catch_all %}yes{% else %}no{% endif %}</span>
+                <span class="text-slate-500">Honeypot</span><span class="text-right {% if ce.ipqs_honeypot %}text-rose-600 font-semibold{% endif %}">{% if ce.ipqs_honeypot is None %}—{% elif ce.ipqs_honeypot %}YES{% else %}no{% endif %}</span>
+                {% if ce.ipqs_first_seen %}<span class="text-slate-500">IPQS first seen</span><span class="text-right" title="{{ ce.ipqs_first_seen }}">{{ ce.ipqs_first_seen|timesince }} ago</span>{% endif %}
+                {% if ce.ipqs_domain_age_days is not None %}<span class="text-slate-500">Domain age</span><span class="text-right">{{ ce.ipqs_domain_age_days }}d</span>{% endif %}
+                {% if ce.ipqs_suggested_domain %}<span class="text-slate-500">Suggested</span><span class="text-right font-mono">{{ ce.ipqs_suggested_domain }}</span>{% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <dl class="text-xs space-y-1 mb-3">
+            <div class="flex justify-between"><dt class="text-slate-500">Disposable</dt><dd>{% if ce.is_disposable %}<span class="text-rose-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Role account</dt><dd>{% if ce.is_role_account %}<span class="text-amber-600">yes</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">MX reachable</dt><dd>{{ ce.mx_reachable }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Gravatar</dt><dd>{{ ce.has_gravatar }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">First seen (ours)</dt><dd title="{{ ce.first_seen }}">{{ ce.first_seen|timesince }} ago</dd></div>
+        </dl>
+
+        {# SDAT scan on email's own domain (skipped for freemail) #}
+        {% if ce.email_domain_scan_at %}
+        <div class="mb-3 p-2 rounded border border-slate-200 bg-slate-50">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] uppercase tracking-wider text-slate-500">Email domain SDAT scan</span>
+                {% if ce.email_domain_scan_skipped_reason %}
+                    <span class="text-[10px] text-slate-500 font-mono">skipped · {{ ce.email_domain_scan_skipped_reason }}</span>
+                {% endif %}
+            </div>
+            {% if ce.email_domain_scan_raw and not ce.email_domain_scan_skipped_reason %}
+            {% with r=ce.email_domain_scan_raw %}
+            <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+                <span class="text-slate-500">Domain</span><span class="text-right font-mono">{{ ce.domain }}</span>
+                <span class="text-slate-500">Risk score</span>
+                <span class="text-right font-semibold {% if r.risk_score >= 70 %}text-rose-600{% elif r.risk_score <= 30 %}text-emerald-600{% else %}text-amber-600{% endif %}">{{ r.risk_score }}/100</span>
+                <span class="text-slate-500">Recommendation</span><span class="text-right">{{ r.recommendation }}</span>
+                <span class="text-slate-500">Risk level</span><span class="text-right">{{ r.risk_level }}</span>
+                <span class="text-slate-500">SPF / DMARC</span>
+                <span class="text-right">{% if r.spf_exists %}✓{% else %}✗{% endif %} / {% if r.dmarc_exists %}{{ r.dmarc_policy }}{% else %}✗{% endif %}</span>
+                <span class="text-slate-500">HTTPS valid</span><span class="text-right">{% if r.https_valid %}✓{% else %}✗{% endif %}</span>
+                <span class="text-slate-500">MX exists</span><span class="text-right">{% if r.mx_exists %}✓{% else %}✗{% endif %}</span>
+                {% if r.rdap_created %}<span class="text-slate-500">Registered</span><span class="text-right" title="{{ r.rdap_created }}">{{ r.rdap_created|slice:":10" }}</span>{% endif %}
+            </div>
+            {% endwith %}
+            {% endif %}
+        </div>
+        {% endif %}
+        {% include "console/_tag_form.html" with entity=ce tag_action_url='/console/entities/email/'|add:ce.id|stringformat:'d'|add:'/tag/' next_url=request.path compact=True %}
+        {% endwith %}
+    </div>
+    {% endif %}
+
+    {% if submission.submitter_ip %}
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2">Submitter IP</h3>
+        {% with sip=submission.submitter_ip %}
+        <div class="text-sm font-mono mb-3">
+            <a href="{% url 'console:ip-detail' sip.address %}" class="text-brand-600 hover:underline">{{ sip.address }}</a>
+            {% if sip.tag %}<span class="ml-1 text-[10px] font-semibold {% if sip.tag == 'good' %}text-emerald-700{% elif sip.tag == 'bad' %}text-rose-700{% else %}text-slate-500{% endif %}">[{{ sip.tag|upper }}]</span>{% endif %}
+        </div>
+        {% if sip.fraud_score is not None %}
+        <div class="mb-3 p-2 rounded border {% if sip.fraud_score >= 85 %}bg-rose-50 border-rose-200{% elif sip.fraud_score >= 75 %}bg-amber-50 border-amber-200{% else %}bg-slate-50 border-slate-200{% endif %}">
+            <div class="flex items-center justify-between">
+                <span class="text-[10px] uppercase tracking-wider text-slate-500">IPQS fraud score</span>
+                <span class="text-lg font-bold {% if sip.fraud_score >= 85 %}text-rose-600{% elif sip.fraud_score >= 75 %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ sip.fraud_score }}/100</span>
+            </div>
+            <div class="flex gap-3 mt-1 text-[10px]">
+                <span class="{% if sip.recent_abuse %}text-rose-600 font-semibold{% else %}text-slate-500{% endif %}">recent_abuse: {% if sip.recent_abuse is None %}—{% elif sip.recent_abuse %}YES{% else %}no{% endif %}</span>
+                <span class="{% if sip.bot_status %}text-rose-600 font-semibold{% else %}text-slate-500{% endif %}">bot: {% if sip.bot_status is None %}—{% elif sip.bot_status %}YES{% else %}no{% endif %}</span>
+            </div>
+        </div>
+        {% endif %}
+        <dl class="text-xs space-y-1 mb-3">
+            <div class="flex justify-between"><dt class="text-slate-500">Country</dt><dd>{{ sip.country|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">City</dt><dd>{{ sip.city|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">ASN</dt><dd class="truncate max-w-[140px]">{{ sip.asn|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Timezone</dt><dd>{{ sip.timezone|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">VPN</dt><dd>{% if sip.is_vpn %}<span class="text-rose-600 font-semibold">YES</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Proxy</dt><dd>{% if sip.is_proxy %}<span class="text-rose-600 font-semibold">YES</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Tor</dt><dd>{% if sip.is_tor %}<span class="text-rose-600 font-semibold">YES</span>{% else %}no{% endif %}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Datacenter</dt><dd>{% if sip.is_datacenter %}<span class="text-amber-600">yes</span>{% else %}no{% endif %}</dd></div>
+        </dl>
+        <form method="POST" action="{% url 'console:ip-tag' sip.address %}" class="space-y-2">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.path }}" />
+            <div class="flex gap-1">
+                <button name="tag" value="good" type="submit" class="flex-1 px-2 py-1 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-700 text-white {% if sip.tag == 'good' %}ring-2 ring-emerald-900{% endif %}">GOOD</button>
+                <button name="tag" value="bad" type="submit" class="flex-1 px-2 py-1 text-xs font-medium rounded bg-rose-600 hover:bg-rose-700 text-white {% if sip.tag == 'bad' %}ring-2 ring-rose-900{% endif %}">BAD</button>
+                <button name="tag" value="do_not_score" type="submit" class="flex-1 px-2 py-1 text-xs font-medium rounded bg-slate-600 hover:bg-slate-700 text-white {% if sip.tag == 'do_not_score' %}ring-2 ring-slate-900{% endif %}">DNS</button>
+                {% if sip.tag %}
+                <button name="tag" value="" type="submit" class="px-2 py-1 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50">Clear</button>
+                {% endif %}
+            </div>
+        </form>
+        {% endwith %}
+    </div>
+    {% endif %}
+
+    {% if submission.contact_name %}
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2">Contact name</h3>
+        {% with cn=submission.contact_name %}
+        <div class="text-sm mb-3">
+            <a href="{% url 'console:entity-detail' 'name' cn.id %}" class="text-brand-600 hover:underline">{{ cn.full }}</a>
+            {% if cn.tag %}<span class="ml-1 text-[10px] font-semibold {% if cn.tag == 'good' %}text-emerald-700{% elif cn.tag == 'bad' %}text-rose-700{% else %}text-slate-500{% endif %}">[{{ cn.tag|upper }}]</span>{% endif %}
+        </div>
+        <dl class="text-xs space-y-1 mb-3">
+            <div class="flex justify-between"><dt class="text-slate-500">Normalized</dt><dd class="font-mono">{{ cn.normalized }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Phonetic</dt><dd class="font-mono">{{ cn.phonetic_hash|default:"—" }}</dd></div>
+        </dl>
+        {% include "console/_tag_form.html" with entity=cn tag_action_url='/console/entities/name/'|add:cn.id|stringformat:'d'|add:'/tag/' next_url=request.path compact=True %}
+        {% endwith %}
+    </div>
+    {% endif %}
+
+    {% if submission.contact_phone %}
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+        <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2">Contact phone</h3>
+        {% with cp=submission.contact_phone %}
+        <div class="text-sm font-mono mb-3">
+            <a href="{% url 'console:entity-detail' 'phone' cp.id %}" class="text-brand-600 hover:underline">{{ cp.e164 }}</a>
+            {% if cp.tag %}<span class="ml-1 text-[10px] font-semibold {% if cp.tag == 'good' %}text-emerald-700{% elif cp.tag == 'bad' %}text-rose-700{% else %}text-slate-500{% endif %}">[{{ cp.tag|upper }}]</span>{% endif %}
+        </div>
+        <dl class="text-xs space-y-1 mb-3">
+            <div class="flex justify-between"><dt class="text-slate-500">Country code</dt><dd>{{ cp.country_code }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Line type</dt><dd>{{ cp.line_type|default:"—" }}</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Carrier</dt><dd>{{ cp.carrier|default:"—" }}</dd></div>
+        </dl>
+        {% include "console/_tag_form.html" with entity=cp tag_action_url='/console/entities/phone/'|add:cp.id|stringformat:'d'|add:'/tag/' next_url=request.path compact=True %}
+        {% endwith %}
+    </div>
+    {% endif %}
+
+    </div> {# /end 2-col grid #}
+
+    {# Domain-side entities — NSes, MX, Registrar, Resolving IPs — full width #}
+    {% if domain_entities %}
+    <div class="bg-white rounded-lg border border-slate-200 p-5 mt-4">
+        <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Domain-side entities ({{ domain_entities|length }})</h3>
+        <div class="space-y-3 text-sm">
+        {% for e in domain_entities %}
+            <div class="pb-3 {% if not forloop.last %}border-b border-slate-100{% endif %} flex items-center justify-between gap-4">
+                <div class="flex-1 min-w-0">
+                    <span class="text-slate-400 mr-2 text-xs uppercase tracking-wider">{{ e.kind }}</span>
+                    {% if e.detail_url %}
+                        <a href="{{ e.detail_url }}" class="font-mono text-brand-600 hover:underline">{{ e.label }}</a>
+                    {% else %}
+                        <span class="font-mono">{{ e.label }}</span>
+                    {% endif %}
+                    {% if e.obj.tag %}<span class="ml-1 text-[10px] font-semibold {% if e.obj.tag == 'good' %}text-emerald-700{% elif e.obj.tag == 'bad' %}text-rose-700{% else %}text-slate-500{% endif %}">[{{ e.obj.tag|upper }}]</span>{% endif %}
+                </div>
+                <div class="shrink-0">
+                {% include "console/_tag_form.html" with entity=e.obj tag_action_url=e.tag_url next_url=request.path compact=True %}
+                </div>
+            </div>
+        {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not submission.contact_email and not submission.submitter_ip and not submission.contact_name and not submission.contact_phone and not domain_entities %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">
+        No entities materialized yet. {% if submission.status == 'queued' %}Run SDAT from the header to populate entity data.{% endif %}
+    </div>
+    {% endif %}
+</div>
+
+
+<div id="tab-network" class="tab-panel hidden space-y-4">
+    {% if network_matches %}
+    <div class="grid grid-cols-2 gap-4">
+    {% for kind, m in network_matches.items %}
+        <div class="bg-slate-900 text-slate-200 rounded-lg p-5">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-xs uppercase tracking-wider text-slate-400">{{ kind }} fingerprint</h3>
+                <a href="{% url 'console:fingerprint-detail' m.primary_fingerprint %}" class="text-xs text-brand-400 hover:underline">open details →</a>
+            </div>
+            <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+            {% if kind == 'infrastructure' %}
+                Hash of nameserver set + MX set + resolving IPs + registrar + ASN + SPF + DMARC + TLS issuer. Matches = shared back-end infrastructure.
+            {% else %}
+                Hash of email domain + phone country + name phonetic hash + device fingerprint. Matches = same submitting actor.
+            {% endif %}
+            </p>
+            <a href="{% url 'console:fingerprint-detail' m.primary_fingerprint %}"
+               class="font-mono text-[10px] text-brand-400 hover:underline break-all mb-3 block">
+                {{ m.primary_fingerprint }}
+            </a>
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                <dt class="text-slate-400" title="Other submissions (across our customer network) with this EXACT same fingerprint hash. Indicates shared infrastructure/actor.">Exact matches <span class="text-slate-600">ⓘ</span></dt>
+                <dd class="text-right">
+                    {% if m.exact_match_count > 0 %}<a href="{% url 'console:fingerprint-detail' m.primary_fingerprint %}" class="text-brand-400 hover:underline">{{ m.exact_match_count }}</a>{% else %}{{ m.exact_match_count }}{% endif %}
+                </dd>
+                <dt class="text-slate-400" title="Total times this fingerprint has been involved in a DENY verdict across our customer network.">Net flagged <span class="text-slate-600">ⓘ</span></dt>
+                <dd class="text-right text-rose-400">{{ m.network_flagged_count }}</dd>
+                <dt class="text-slate-400" title="Total times this fingerprint has been involved in an APPROVE verdict across our customer network.">Net approved <span class="text-slate-600">ⓘ</span></dt>
+                <dd class="text-right text-emerald-400">{{ m.network_approved_count }}</dd>
+                <dt class="text-slate-400" title="False Positives / False Negatives reported by investigators via the Review buttons. FP = system said DENY but investigator said it was good. FN = system APPROVED but fraud confirmed later.">Feedback FP / FN <span class="text-slate-600">ⓘ</span></dt>
+                <dd class="text-right">{{ m.network_feedback_false_positive_count }} / {{ m.network_feedback_false_negative_count }}</dd>
+                <dt class="text-slate-300 font-medium" title="Combined reputation score from −1.0 (consistently flagged as bad across our network) to +1.0 (consistently approved). Computed from verdicts + investigator feedback.">Reputation <span class="text-slate-600">ⓘ</span></dt>
+                <dd class="text-right font-semibold {% if m.network_reputation_score > 0.2 %}text-emerald-400{% elif m.network_reputation_score < -0.2 %}text-rose-400{% else %}text-amber-400{% endif %}">{{ m.network_reputation_score }}</dd>
+            </dl>
+            {% if m.similar %}
+            <div class="mt-3 pt-3 border-t border-slate-700">
+                <div class="text-xs text-slate-400 mb-1">{{ m.similar|length }} fuzzy neighbor{{ m.similar|length|pluralize }} — not exact, but share enough signals to be related:</div>
+                <div class="space-y-1">
+                {% for s in m.similar|slice:":5" %}
+                    <a href="{% url 'console:fingerprint-detail' s.fingerprint_hash %}" class="flex items-center justify-between text-[11px] hover:bg-slate-800 rounded px-1 py-0.5">
+                        <span class="font-mono text-slate-400">{{ s.fingerprint_hash|slice:":16" }}…</span>
+                        <span class="text-slate-500">sim {{ s.similarity }}</span>
+                    </a>
+                {% endfor %}
+                {% if m.similar|length > 5 %}
+                    <a href="{% url 'console:fingerprint-detail' m.primary_fingerprint %}" class="text-[11px] text-brand-400 hover:underline">+ {{ m.similar|length|add:"-5" }} more →</a>
+                {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">
+        No fingerprints computed yet. Run SDAT analysis to produce them.
+    </div>
+    {% endif %}
+</div>
+
+
+{% if has_ehawk_reference %}
+<div id="tab-reference" class="tab-panel hidden">
+    <div class="bg-amber-50 border-2 border-amber-300 rounded-lg overflow-hidden">
+        <div class="px-5 py-3 border-b border-amber-300 flex items-center justify-between bg-amber-100/50">
+            <div>
+                <h2 class="text-sm font-semibold text-amber-900">eHawk reference data</h2>
+                <p class="text-xs text-amber-800 mt-0.5">Comparison only — does not drive SDAT verdict.</p>
+            </div>
+            {% if ehawk_score_val %}
+            <div class="text-right">
+                <div class="text-xs text-amber-800 uppercase tracking-wider">eHawk score</div>
+                <div class="flex items-baseline gap-2 justify-end">
+                    <div class="text-2xl font-bold {% if ehawk_decision_guess == 'deny' %}text-rose-700{% elif ehawk_decision_guess == 'approve' %}text-emerald-700{% else %}text-amber-700{% endif %}">{{ ehawk_score_val }}</div>
+                    {% if ehawk_decision_guess %}
+                    <span class="inline-flex px-1.5 py-0.5 rounded text-xs font-medium {% if ehawk_decision_guess == 'deny' %}bg-rose-100 text-rose-700{% elif ehawk_decision_guess == 'approve' %}bg-emerald-100 text-emerald-700{% else %}bg-amber-100 text-amber-700{% endif %}">{{ ehawk_decision_guess }}</span>
+                    {% endif %}
+                </div>
+                {% if submission.metadata.ehawk_risk_type %}
+                <div class="text-xs text-amber-700 mt-0.5">{{ submission.metadata.ehawk_risk_type }}</div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="p-5 space-y-4">
+            <div class="text-xs text-amber-900 bg-amber-100/60 rounded p-2 border border-amber-200">
+                💡 <strong>To adjust scoring:</strong> tag the relevant entity (IP / email / etc.) as <span class="text-emerald-800 font-semibold">GOOD</span> or <span class="text-rose-800 font-semibold">BAD</span> in the <em>Entities &amp; Tags</em> tab with a reason referencing this eHawk data.
+            </div>
+
+            {% if ehawk_meta %}
+            <details open>
+                <summary class="cursor-pointer text-xs uppercase tracking-wider text-amber-800 font-semibold">
+                    eHawk lead metadata ({{ ehawk_meta|length }} fields) ▾
+                </summary>
+                <dl class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs mt-3">
+                {% for k, v in ehawk_meta %}
+                    <div class="flex justify-between gap-4 py-1 border-b border-amber-200/50">
+                        <dt class="text-amber-700">{{ k }}</dt>
+                        <dd class="font-mono truncate max-w-[220px] text-right text-amber-900" title="{{ v }}">{{ v|stringformat:"s"|truncatechars:50 }}</dd>
+                    </div>
+                {% endfor %}
+                </dl>
+            </details>
+            {% endif %}
+
+            {% if ehawk_flags %}
+            <details>
+                <summary class="cursor-pointer text-xs uppercase tracking-wider text-amber-800 font-semibold">
+                    eHawk risk flags set ({{ ehawk_flags|length }}) ▾
+                </summary>
+                <div class="flex flex-wrap gap-1.5 mt-3">
+                {% for k, v in ehawk_flags %}
+                    <span class="inline-flex px-2 py-0.5 text-xs bg-white text-amber-900 border border-amber-300 rounded font-mono" title="{{ k }}: {{ v }}">{{ k }}</span>
+                {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+
+<script>
+function showTab(id) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('border-brand-600', 'text-brand-700', 'font-semibold');
+        b.classList.add('border-transparent', 'text-slate-500');
+    });
+    const panel = document.getElementById(id);
+    if (panel) panel.classList.remove('hidden');
+    const btn = document.querySelector(`[data-tab="${id}"]`);
+    if (btn) {
+        btn.classList.add('border-brand-600', 'text-brand-700', 'font-semibold');
+        btn.classList.remove('border-transparent', 'text-slate-500');
+    }
+}
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        showTab(btn.dataset.tab);
+        history.replaceState(null, '', `#${btn.dataset.tab}`);
+    });
+});
+const initialTab = location.hash.slice(1) || 'tab-overview';
+showTab(document.getElementById(initialTab) ? initialTab : 'tab-overview');
+</script>
+{% endblock %}

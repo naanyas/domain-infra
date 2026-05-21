@@ -1,0 +1,84 @@
+{% extends "console/base.html" %}
+{% block title %}Scoring rules · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-xs mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">Scoring rules</span>
+</nav>
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-semibold">Scoring rules</h1>
+        <div class="text-sm text-slate-500 mt-0.5">
+            {{ total_count }} rules configured · <strong class="text-emerald-700">{{ impl_count }} implemented</strong>
+            · {{ total_count|add:"-"|add:impl_count|add:"0" }} pending detector
+        </div>
+    </div>
+    <a href="/admin/scoring/scoringrule/" class="text-sm text-brand-600 hover:underline">Edit in Django admin →</a>
+</div>
+
+<div class="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs text-amber-900 mb-4">
+    <strong>How scoring works:</strong> each rule has a <strong>default score</strong> (recommended) and a <strong>current score</strong> (customer-tuned). Pipeline detects which rules fire on a submission and sums their <code>current_score</code> as deductions against a +100 starting total. Rules tagged <span class="inline-block px-1.5 rounded bg-emerald-100 text-emerald-800">implemented</span> are wired into the pipeline; others are loaded but not yet evaluated (see next turn).
+</div>
+
+<form method="GET" class="flex gap-2 mb-4 text-sm flex-wrap">
+    <input name="q" value="{{ q }}" placeholder="search rules…" class="px-3 py-2 rounded-md border border-slate-300 w-64" />
+    <select name="area" class="px-3 py-2 rounded-md border border-slate-300">
+        <option value="">All areas ({{ total_count }})</option>
+        {% for a, n in area_counts.items %}
+            <option value="{{ a }}" {% if area_filter == a %}selected{% endif %}>{{ a }} ({{ n }})</option>
+        {% endfor %}
+    </select>
+    <select name="impl" class="px-3 py-2 rounded-md border border-slate-300">
+        <option value="">All coverage</option>
+        <option value="yes" {% if impl_filter == "yes" %}selected{% endif %}>Implemented</option>
+        <option value="no"  {% if impl_filter == "no"  %}selected{% endif %}>Pending detector</option>
+    </select>
+    <button type="submit" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-md">Filter</button>
+</form>
+
+{% for area, rules in groups.items %}
+<div class="bg-white rounded-lg border border-slate-200 mb-5 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+        <h2 class="text-sm font-semibold">{{ area }}</h2>
+        <span class="text-xs text-slate-500">{{ rules|length }} rule{{ rules|length|pluralize }}</span>
+    </div>
+    <table class="w-full text-sm">
+        <thead class="text-xs text-slate-500 uppercase bg-slate-50/50 border-b border-slate-100">
+            <tr>
+                <th class="text-left font-medium px-5 py-2 w-12">Impl</th>
+                <th class="text-left font-medium px-5 py-2">Hit</th>
+                <th class="text-left font-medium px-5 py-2">Description</th>
+                <th class="text-right font-medium px-5 py-2 w-20">Default</th>
+                <th class="text-right font-medium px-5 py-2 w-20">Current</th>
+                <th class="text-right font-medium px-5 py-2 w-16">30d</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+        {% for r in rules %}
+            <tr>
+                <td class="px-5 py-2">
+                    {% if r.is_implemented %}
+                        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500" title="Implemented"></span>
+                    {% else %}
+                        <span class="inline-block w-2 h-2 rounded-full bg-slate-300" title="Pending detector"></span>
+                    {% endif %}
+                </td>
+                <td class="px-5 py-2 font-medium">{{ r.hit }}</td>
+                <td class="px-5 py-2 text-xs text-slate-600">{{ r.description|truncatechars:90 }}</td>
+                <td class="px-5 py-2 text-right font-mono text-xs text-slate-500">{{ r.default_score }}</td>
+                <td class="px-5 py-2 text-right font-mono text-xs font-semibold {% if r.current_score > 0 %}text-emerald-700{% elif r.current_score < 0 %}text-rose-700{% else %}text-slate-500{% endif %}">{{ r.current_score }}</td>
+                <td class="px-5 py-2 text-right font-mono text-xs text-slate-500">{{ r.hit_count_30d }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% empty %}
+<div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">
+    No rules loaded yet. Run: <code class="bg-white px-1 py-0.5 rounded">python manage.py load_scoring_rules</code>
+</div>
+{% endfor %}
+{% endblock %}

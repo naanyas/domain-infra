@@ -1,0 +1,385 @@
+{% extends "console/base.html" %}
+{% block title %}Threat intel · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-xs mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">Threat intel</span>
+</nav>
+
+{% if messages %}
+{% for message in messages %}
+<div class="mb-4 p-3 rounded-md border {% if message.tags == 'success' %}bg-emerald-50 border-emerald-200 text-emerald-900{% elif message.tags == 'error' %}bg-rose-50 border-rose-200 text-rose-900{% else %}bg-slate-50 border-slate-200 text-slate-800{% endif %} text-sm">
+    {{ message }}
+</div>
+{% endfor %}
+{% endif %}
+
+<div class="flex items-center justify-between mb-5">
+    <div>
+        <h1 class="text-2xl font-semibold">🛡 Threat intel</h1>
+        <p class="text-sm text-slate-500 mt-1">All known-bad attributes — domains, IPs, emails, names, phones, and fingerprint clusters. Submissions matching any of these get a score bump; user-specific attributes (email / non-shared IP / phone / name) also tag future submissions automatically.</p>
+    </div>
+    <div class="text-right">
+        <div class="text-3xl font-semibold text-slate-900">{{ total_all }}</div>
+        <div class="text-xs text-slate-500">bad indicators total</div>
+    </div>
+</div>
+
+{# ── Tab nav ─────────────────────────────────────────────── #}
+<div class="flex gap-0 text-sm border-b border-slate-200 mb-5">
+    <button class="ti-tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="domains">🌐 Domains ({{ total }})</button>
+    <button class="ti-tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="ips">🖥 IPs ({{ bad_ips|length }})</button>
+    <button class="ti-tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="emails">📧 Emails ({{ bad_emails|length }})</button>
+    <button class="ti-tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="phones">☎️ Phones ({{ bad_phones|length }})</button>
+    <button class="ti-tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="names">👤 Names ({{ bad_names|length }})</button>
+    <button class="ti-tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="clusters">🧬 Fingerprint clusters ({{ bad_clusters|length }})</button>
+    <button class="ti-tab-btn px-4 py-2 -mb-px text-slate-500 hover:text-slate-700 border-b-2 border-transparent" data-tab="feeds">🔄 Feeds ({{ feeds|length }})</button>
+</div>
+
+<div id="ti-feeds" class="ti-panel hidden">
+    <div class="flex items-center justify-between mb-3">
+        <p class="text-sm text-slate-600 max-w-2xl">
+            External threat-intel feeds pulled on a schedule. Scheduling is via cron:
+            <code class="bg-slate-100 px-1.5 rounded text-xs">*/30 * * * * cd /path && .venv/bin/python manage.py refresh_threat_intel</code>
+        </p>
+        <form method="POST" action="{% url 'console:threat-intel-refresh-all' %}" class="inline-flex gap-2">
+            {% csrf_token %}
+            <button class="px-3 py-1.5 bg-slate-900 hover:bg-slate-700 text-white rounded text-xs font-medium">↻ Refresh due</button>
+            <button name="force" value="1" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-medium">↻ Force refresh ALL</button>
+        </form>
+    </div>
+    {% if feeds %}
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                    <th class="text-left px-4 py-2">Feed</th>
+                    <th class="text-left px-4 py-2">Parser</th>
+                    <th class="text-left px-4 py-2">Enabled</th>
+                    <th class="text-left px-4 py-2">Interval</th>
+                    <th class="text-left px-4 py-2">Last fetched</th>
+                    <th class="text-left px-4 py-2">Status</th>
+                    <th class="text-right px-4 py-2">Last items</th>
+                    <th class="text-right px-4 py-2">Action</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for f in feeds %}
+                <tr class="hover:bg-slate-50">
+                    <td class="px-4 py-2">
+                        <div class="text-sm font-medium">{{ f.name }}</div>
+                        <a href="{{ f.url }}" target="_blank" class="text-xs text-sky-600 hover:underline break-all">{{ f.url|truncatechars:70 }}</a>
+                    </td>
+                    <td class="px-4 py-2 font-mono text-xs text-slate-600">{{ f.parser }}</td>
+                    <td class="px-4 py-2 text-xs">{% if f.enabled %}<span class="text-emerald-700">✓</span>{% else %}<span class="text-slate-400">off</span>{% endif %}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">every {{ f.refresh_interval_hours }}h</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{% if f.last_fetched_at %}{{ f.last_fetched_at|timesince }} ago{% else %}never{% endif %}</td>
+                    <td class="px-4 py-2 text-xs">
+                        {% if f.last_status == 'ok' %}<span class="text-emerald-700">✓ ok</span>
+                        {% elif f.last_status == 'error' %}<span class="text-rose-700" title="{{ f.last_error }}">✗ error</span>
+                        {% else %}<span class="text-slate-400">never</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-2 text-right text-xs">
+                        {% if f.last_status == 'ok' %}
+                        <span class="text-slate-600">+{{ f.last_items_created }} · ↻{{ f.last_items_updated }}</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="px-4 py-2 text-right">
+                        <form method="POST" action="{% url 'console:threat-intel-refresh-feed' f.id %}" class="inline">
+                            {% csrf_token %}
+                            <button class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs rounded">↻</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">
+        No feeds configured. Run <code class="bg-white px-1 rounded">python manage.py load_default_threat_intel_feeds</code> to seed the built-in roster.
+    </div>
+    {% endif %}
+</div>
+
+{# Tabs that are NOT domains render here #}
+<div id="ti-ips" class="ti-panel hidden">
+    {% if bad_ips %}
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                    <th class="text-left px-4 py-2">Address</th>
+                    <th class="text-left px-4 py-2">Country</th>
+                    <th class="text-left px-4 py-2">ASN</th>
+                    <th class="text-left px-4 py-2">Reason</th>
+                    <th class="text-left px-4 py-2">Tagged</th>
+                    <th class="text-left px-4 py-2">By</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for ip in bad_ips %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:ip-detail' ip.address %}'">
+                    <td class="px-4 py-2 font-mono text-xs">{{ ip.address }}</td>
+                    <td class="px-4 py-2 text-xs">{{ ip.country|default:"—" }} {% if ip.city %}<span class="text-slate-500">· {{ ip.city }}</span>{% endif %}</td>
+                    <td class="px-4 py-2 text-xs text-slate-600">{{ ip.asn|default:"—"|truncatechars:40 }}</td>
+                    <td class="px-4 py-2 text-xs">{{ ip.tag_reason|truncatechars:80 }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ ip.tagged_at|date:"Y-m-d" }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ ip.tagged_by|truncatechars:20 }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">No IPs tagged bad yet. Tag from an IP detail page or from a submission.</div>
+    {% endif %}
+</div>
+
+<div id="ti-emails" class="ti-panel hidden">
+    {% if bad_emails %}
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr><th class="text-left px-4 py-2">Email</th><th class="text-left px-4 py-2">Reason</th><th class="text-left px-4 py-2">Tagged</th><th class="text-left px-4 py-2">By</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for e in bad_emails %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:entity-detail' 'email' e.id %}'">
+                    <td class="px-4 py-2 font-mono text-xs">{{ e.normalized }}</td>
+                    <td class="px-4 py-2 text-xs">{{ e.tag_reason|truncatechars:80 }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ e.tagged_at|date:"Y-m-d" }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ e.tagged_by|truncatechars:20 }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">No emails tagged bad yet.</div>
+    {% endif %}
+</div>
+
+<div id="ti-phones" class="ti-panel hidden">
+    {% if bad_phones %}
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr><th class="text-left px-4 py-2">Phone</th><th class="text-left px-4 py-2">Reason</th><th class="text-left px-4 py-2">Tagged</th><th class="text-left px-4 py-2">By</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for p in bad_phones %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:entity-detail' 'phone' p.id %}'">
+                    <td class="px-4 py-2 font-mono text-xs">{{ p.e164|default:"—" }}</td>
+                    <td class="px-4 py-2 text-xs">{{ p.tag_reason|truncatechars:80 }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ p.tagged_at|date:"Y-m-d" }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ p.tagged_by|truncatechars:20 }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">No phones tagged bad yet.</div>
+    {% endif %}
+</div>
+
+<div id="ti-names" class="ti-panel hidden">
+    {% if bad_names %}
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr><th class="text-left px-4 py-2">Name</th><th class="text-left px-4 py-2">Reason</th><th class="text-left px-4 py-2">Tagged</th><th class="text-left px-4 py-2">By</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for n in bad_names %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:entity-detail' 'name' n.id %}'">
+                    <td class="px-4 py-2 text-xs">{{ n.normalized }}</td>
+                    <td class="px-4 py-2 text-xs">{{ n.tag_reason|truncatechars:80 }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ n.tagged_at|date:"Y-m-d" }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ n.tagged_by|truncatechars:20 }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">No names tagged bad yet.</div>
+    {% endif %}
+</div>
+
+<div id="ti-clusters" class="ti-panel hidden">
+    {% if bad_clusters %}
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                    <th class="text-left px-4 py-2">Fingerprint</th>
+                    <th class="text-left px-4 py-2">Kind</th>
+                    <th class="text-left px-4 py-2">Size</th>
+                    <th class="text-left px-4 py-2">Reason</th>
+                    <th class="text-left px-4 py-2">Marked</th>
+                    <th class="text-left px-4 py-2">By</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for fp in bad_clusters %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:fingerprint-detail' fp.fingerprint_hash %}'">
+                    <td class="px-4 py-2 font-mono text-xs">{{ fp.fingerprint_hash|slice:":24" }}…</td>
+                    <td class="px-4 py-2 text-xs uppercase text-slate-500">{{ fp.kind }}</td>
+                    <td class="px-4 py-2 text-xs font-semibold">{{ fp.reputation.cluster_verdict_size }} subs</td>
+                    <td class="px-4 py-2 text-xs">{{ fp.reputation.cluster_verdict_reason|truncatechars:80 }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ fp.reputation.cluster_verdict_at|date:"Y-m-d" }}</td>
+                    <td class="px-4 py-2 text-xs text-slate-500">{{ fp.reputation.cluster_verdict_by|truncatechars:20 }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">No fingerprint clusters marked bad yet.</div>
+    {% endif %}
+</div>
+
+<div id="ti-domains" class="ti-panel">
+
+<!-- Report new indicator -->
+<details class="mb-6 bg-gradient-to-br from-indigo-50 to-white border border-indigo-200 rounded-lg" open>
+    <summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-indigo-900">+ Add a known-threat indicator (community report)</summary>
+    <form method="POST" action="{% url 'console:threat-intel-add' %}" class="p-4 grid grid-cols-12 gap-2 text-sm border-t border-indigo-200">
+        {% csrf_token %}
+        <input name="domain" placeholder="domain or hostname (e.g. thepaddlerss.com)" required class="col-span-4 px-3 py-2 rounded-md border border-slate-300" />
+        <select name="category" required class="col-span-2 px-2 py-2 rounded-md border border-slate-300">
+            <option value="">Category…</option>
+            <option value="phishing">phishing</option>
+            <option value="malware">malware</option>
+            <option value="drainer">drainer</option>
+            <option value="scam" selected>scam</option>
+            <option value="spam">spam</option>
+            <option value="scan">scan</option>
+            <option value="suspicious">suspicious</option>
+        </select>
+        <select name="confidence" class="col-span-2 px-2 py-2 rounded-md border border-slate-300">
+            <option value="high" selected>high · +60</option>
+            <option value="medium">medium · +30</option>
+            <option value="low">low · +10</option>
+        </select>
+        <input name="subcategory" placeholder="subcategory (optional)" class="col-span-2 px-3 py-2 rounded-md border border-slate-300" />
+        <input name="brand_target" placeholder="brand (opt)" class="col-span-2 px-3 py-2 rounded-md border border-slate-300" />
+        <input name="notes" placeholder="why is this a threat? (shown to investigators)" class="col-span-10 px-3 py-2 rounded-md border border-slate-300" />
+        <button class="col-span-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md font-medium">Add indicator</button>
+    </form>
+</details>
+
+<div class="flex flex-wrap gap-2 mb-3 text-sm">
+    <span class="text-xs uppercase tracking-wider text-slate-500 pr-1 self-center">Category:</span>
+    <a href="?{% if conf %}confidence={{ conf }}&{% endif %}{% if q %}q={{ q }}{% endif %}"
+       class="px-3 py-1 rounded-full border {% if not cat %}bg-slate-900 text-white border-slate-900{% else %}bg-white border-slate-300 text-slate-700 hover:bg-slate-50{% endif %}">All</a>
+    {% for c, n in category_counts.items %}
+    <a href="?category={{ c }}{% if conf %}&confidence={{ conf }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+       class="px-3 py-1 rounded-full border {% if cat == c %}bg-slate-900 text-white border-slate-900{% else %}bg-white border-slate-300 text-slate-700 hover:bg-slate-50{% endif %}">
+       {{ c }} <span class="text-xs opacity-70 ml-1">{{ n }}</span>
+    </a>
+    {% endfor %}
+</div>
+
+<div class="flex flex-wrap gap-2 mb-3 text-sm">
+    <span class="text-xs uppercase tracking-wider text-slate-500 pr-1 self-center">Confidence:</span>
+    <a href="?{% if cat %}category={{ cat }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+       class="px-3 py-1 rounded-full border {% if not conf %}bg-slate-900 text-white border-slate-900{% else %}bg-white border-slate-300 text-slate-700 hover:bg-slate-50{% endif %}">All</a>
+    {% for c, n in confidence_counts.items %}
+    <a href="?confidence={{ c }}{% if cat %}&category={{ cat }}{% endif %}{% if q %}&q={{ q }}{% endif %}"
+       class="px-3 py-1 rounded-full border {% if conf == c %}{% if c == 'high' %}bg-rose-600 border-rose-600{% elif c == 'medium' %}bg-amber-600 border-amber-600{% else %}bg-slate-600 border-slate-600{% endif %} text-white{% else %}bg-white border-slate-300 text-slate-700 hover:bg-slate-50{% endif %}">
+       {{ c }} <span class="text-xs opacity-70 ml-1">{{ n }}</span>
+    </a>
+    {% endfor %}
+</div>
+
+<form method="GET" class="flex gap-2 mb-4 text-sm">
+    <input name="q" value="{{ q }}" placeholder="search domain, brand, subcategory, source, notes…" class="flex-1 px-3 py-2 rounded-md border border-slate-300" />
+    {% if cat %}<input type="hidden" name="category" value="{{ cat }}" />{% endif %}
+    {% if conf %}<input type="hidden" name="confidence" value="{{ conf }}" />{% endif %}
+    <button class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-md">Search</button>
+</form>
+
+<div class="mb-2 text-xs text-slate-500">Showing {{ shown }} of {{ total }} indicator{{ total|pluralize }}.</div>
+
+<div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="text-xs uppercase text-slate-500 bg-slate-50">
+            <tr>
+                <th class="text-left px-4 py-2">Domain</th>
+                <th class="text-left px-4 py-2">Category</th>
+                <th class="text-left px-4 py-2">Subcategory</th>
+                <th class="text-left px-4 py-2">Brand</th>
+                <th class="text-left px-4 py-2">Confidence</th>
+                <th class="text-right px-4 py-2">Weight</th>
+                <th class="text-left px-4 py-2">Source</th>
+                <th class="text-left px-4 py-2">Reported</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+        {% for r in rows %}
+            <tr class="hover:bg-slate-50">
+                <td class="px-4 py-2 font-mono text-xs break-all">
+                    {{ r.domain }}
+                    {% if r.apex_subdomain_only %}<span class="ml-1 text-[10px] bg-slate-100 text-slate-600 rounded px-1">apex-only</span>{% endif %}
+                    {% if r.is_meta_cluster %}<span class="ml-1 text-[10px] bg-amber-100 text-amber-800 rounded px-1">meta</span>{% endif %}
+                </td>
+                <td class="px-4 py-2 text-xs">
+                    {% if r.category == 'phishing' %}<span class="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">{{ r.category }}</span>
+                    {% elif r.category == 'malware' %}<span class="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-semibold">{{ r.category }}</span>
+                    {% elif r.category == 'drainer' %}<span class="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-800">{{ r.category }}</span>
+                    {% elif r.category == 'scam' %}<span class="px-1.5 py-0.5 rounded bg-orange-50 text-orange-800">{{ r.category }}</span>
+                    {% elif r.category == 'scan' %}<span class="px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-800">{{ r.category }}</span>
+                    {% else %}<span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">{{ r.category }}</span>{% endif %}
+                </td>
+                <td class="px-4 py-2 text-xs text-slate-600">{{ r.subcategory|default:"—" }}</td>
+                <td class="px-4 py-2 text-xs text-slate-600">{{ r.brand_target|default:"—" }}</td>
+                <td class="px-4 py-2 text-xs">
+                    {% if r.confidence == 'high' %}<span class="px-1.5 py-0.5 rounded bg-rose-600 text-white">HIGH</span>
+                    {% elif r.confidence == 'medium' %}<span class="px-1.5 py-0.5 rounded bg-amber-500 text-white">MED</span>
+                    {% else %}<span class="px-1.5 py-0.5 rounded bg-slate-400 text-white">LOW</span>{% endif %}
+                </td>
+                <td class="px-4 py-2 text-right font-mono text-xs font-semibold">+{{ r.score_weight }}</td>
+                <td class="px-4 py-2 text-xs text-slate-500">{{ r.source }}</td>
+                <td class="px-4 py-2 text-xs text-slate-500 font-mono whitespace-nowrap">{{ r.reported_date|date:"Y-m-d" }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="8" class="px-4 py-8 text-center text-slate-500 text-sm">No indicators match.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+</div>{# /ti-domains panel #}
+
+<script>
+(function () {
+  function showTab(id) {
+    document.querySelectorAll('.ti-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.ti-tab-btn').forEach(b => {
+      b.classList.remove('border-brand-600', 'text-brand-700', 'font-semibold');
+      b.classList.add('border-transparent', 'text-slate-500');
+    });
+    const panel = document.getElementById('ti-' + id);
+    if (panel) panel.classList.remove('hidden');
+    const btn = document.querySelector(`.ti-tab-btn[data-tab="${id}"]`);
+    if (btn) {
+      btn.classList.add('border-brand-600', 'text-brand-700', 'font-semibold');
+      btn.classList.remove('border-transparent', 'text-slate-500');
+    }
+  }
+  document.querySelectorAll('.ti-tab-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      showTab(btn.dataset.tab);
+      history.replaceState(null, '', `#${btn.dataset.tab}`);
+    });
+  });
+  const initial = (location.hash || '#domains').slice(1);
+  showTab(initial);
+})();
+</script>
+{% endblock %}

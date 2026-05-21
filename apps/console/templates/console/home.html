@@ -1,0 +1,252 @@
+{% extends "console/base.html" %}
+{% block title %}Dashboard · domain-infra{% endblock %}
+
+{% block main %}
+{# eHawk-style dark dashboard — inversion of the light main wrapper via negative margins. #}
+<div class="-m-8 bg-slate-900 min-h-full text-slate-100">
+    <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+        <h1 class="text-xl font-semibold text-white">Dashboard <span class="text-slate-400 text-sm font-normal ml-2">— Last 30 Days</span></h1>
+        <div class="flex items-center gap-3 text-xs text-slate-400">
+            {% if org %}<span class="px-2 py-1 bg-slate-800 rounded">{{ org.name }}</span>{% endif %}
+            <a href="{% url 'console:submission-new' %}" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white rounded text-xs font-medium">+ New submission</a>
+        </div>
+    </div>
+
+    {% if not org %}
+    <div class="m-6 bg-amber-900 text-amber-100 border border-amber-700 rounded p-4 text-sm">No organization found.</div>
+    {% else %}
+
+    <div class="grid grid-cols-12 gap-4 p-6">
+
+        {# ── MAIN RISK LINE CHART (8 cols) ───────────────────────── #}
+        <div class="col-span-8 bg-slate-800 rounded-lg p-5 border border-slate-700">
+            <div class="flex items-start justify-between mb-3">
+                <div>
+                    <div class="text-xs uppercase tracking-wider font-semibold" style="color: {{ chart.selected_color }}">{{ chart.selected_label|default:"Risk Level" }}</div>
+                    <div class="text-sm text-slate-400">Count vs. Percent over Threshold</div>
+                </div>
+                <form method="GET" class="text-xs">
+                    <select name="risk" onchange="this.form.submit()" class="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2 py-1">
+                        {% for b in bands %}
+                        <option value="{{ b.label }}" {% if b.label == chart.selected_label %}selected{% endif %}>{{ b.label }} ({{ b.score_start }}–{{ b.score_end }})</option>
+                        {% endfor %}
+                    </select>
+                </form>
+            </div>
+            <div class="h-[360px]"><canvas id="chart-risk"></canvas></div>
+            <div class="mt-3 text-xs text-slate-500">
+                Edit these bands in <a href="{% url 'console:scoring-bands' %}" class="text-sky-400 hover:underline">Scoring bands</a>.
+            </div>
+        </div>
+
+        {# ── RIGHT COLUMN (4 cols) ──────────────────────────────── #}
+        <div class="col-span-4 space-y-4">
+
+            {# Gauge donut — band breakdown #}
+            <div class="bg-slate-800 rounded-lg p-5 border border-slate-700">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="text-xs uppercase tracking-wider text-slate-300 font-semibold">Risk Hit Scoring by Band</div>
+                    <a href="{% url 'console:scoring-bands' %}" class="text-xs text-slate-400 hover:text-white">Scoring bands ▾</a>
+                </div>
+                <div class="relative flex items-center justify-center h-44">
+                    <canvas id="chart-gauge"></canvas>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-400">Total</div>
+                        <div class="text-3xl font-bold text-white">{{ totals.total }}</div>
+                    </div>
+                </div>
+                <div class="mt-3 space-y-1 text-xs">
+                {% for b in bands %}
+                    <a href="?risk={{ b.label }}" class="flex items-center justify-between hover:text-white {% if b.label == chart.selected_label %}text-white font-semibold{% else %}text-slate-400{% endif %}">
+                        <span class="flex items-center gap-1.5">
+                            <span class="inline-block w-2.5 h-2.5 rounded-full" style="background: {{ b.color }}"></span>
+                            <span>{{ b.label }}</span>
+                            <span class="text-[10px] text-slate-500">({{ b.score_start }}–{{ b.score_end }})</span>
+                        </span>
+                        <span class="font-mono text-[11px]">{% for lbl, cnt in band_totals.items %}{% if lbl == b.label %}{{ cnt }}{% endif %}{% endfor %}</span>
+                    </a>
+                {% endfor %}
+                </div>
+            </div>
+
+            {# KPI tiles + pipeline timing chart #}
+            <div class="bg-slate-800 rounded-lg p-5 border border-slate-700">
+                <div class="text-xs uppercase tracking-wider text-slate-300 font-semibold mb-3">API Usage and Timing</div>
+                <div class="flex items-baseline gap-6 mb-3">
+                    <div>
+                        <div class="text-2xl font-bold text-white">{{ totals.total }}</div>
+                        <div class="text-[10px] uppercase text-slate-500">API</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-white">{{ override_count }}</div>
+                        <div class="text-[10px] uppercase text-slate-500">Overrides</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-white">{{ avg_seconds }}</div>
+                        <div class="text-[10px] uppercase text-slate-500">Avg Seconds</div>
+                    </div>
+                </div>
+                <div class="h-20"><canvas id="chart-timing"></canvas></div>
+            </div>
+
+            {# Spike events #}
+            <div class="bg-slate-800 rounded-lg p-5 border border-slate-700">
+                <div class="text-xs uppercase tracking-wider text-slate-300 font-semibold mb-2">Spike Events</div>
+                <div class="text-xs text-slate-400 mb-2">Deny-rate spikes in the last 7 days &gt; 2× the 30-day mean.</div>
+                {% if spike_events %}
+                <ul class="space-y-1 text-xs">
+                {% for sp in spike_events %}
+                    <li class="flex justify-between text-rose-300"><span>{{ sp.date }}</span><span class="font-mono">{{ sp.count }} denies</span></li>
+                {% endfor %}
+                </ul>
+                {% else %}
+                <div class="text-sm text-emerald-400 font-medium">No spikes detected the last 7 days.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        {# ── STACKED BAR (full width) — grouped by custom bands ── #}
+        <div class="col-span-12 bg-slate-800 rounded-lg p-5 border border-slate-700">
+            <div class="flex items-start justify-between mb-3">
+                <div>
+                    <div class="text-xs uppercase tracking-wider text-slate-300 font-semibold">Risk Scores by Band</div>
+                    <div class="text-sm text-slate-400">Per-day stack using your configured scoring bands</div>
+                </div>
+                <a href="{% url 'console:submissions-list' %}" class="text-xs text-slate-400 hover:text-white">View submissions →</a>
+            </div>
+            <div class="h-[260px]"><canvas id="chart-stacked"></canvas></div>
+        </div>
+
+        {# ── RECENT SUBMISSIONS QUICK QUEUE ───────────────────── #}
+        <div class="col-span-12 bg-slate-800 rounded-lg p-5 border border-slate-700">
+            <div class="flex items-center justify-between mb-3">
+                <div class="text-xs uppercase tracking-wider text-slate-300 font-semibold">Recent Submissions</div>
+                <a href="{% url 'console:submissions-list' %}" class="text-xs text-slate-400 hover:text-white">View all →</a>
+            </div>
+            <table class="w-full text-sm">
+                <thead class="text-[10px] uppercase text-slate-500">
+                    <tr>
+                        <th class="text-left font-medium py-2">When</th>
+                        <th class="text-left font-medium py-2">Domain / Email</th>
+                        <th class="text-left font-medium py-2">Verdict</th>
+                        <th class="text-left font-medium py-2">Score</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-700">
+                {% for s in recent %}
+                    <tr class="hover:bg-slate-700 cursor-pointer" onclick="location.href='{% url 'console:submission-detail' s.id %}?back={{ request.get_full_path|urlencode }}'">
+                        <td class="py-2 text-xs text-slate-400 whitespace-nowrap">{{ s.created_at|date:"Y-m-d H:i" }}</td>
+                        <td class="py-2">
+                            <div class="text-sm text-white font-mono">{{ s.domain|default:"—" }}</div>
+                            {% if s.contact_email_raw %}<div class="text-xs text-slate-400">{{ s.contact_email_raw }}</div>{% endif %}
+                        </td>
+                        <td class="py-2 text-xs">
+                            {% if s.verdict %}
+                            {% if s.verdict.effective_decision == 'approve' %}<span class="text-emerald-400">approve</span>
+                            {% elif s.verdict.effective_decision == 'deny' %}<span class="text-rose-400">deny</span>
+                            {% else %}<span class="text-amber-400">review</span>{% endif %}
+                            {% else %}<span class="text-slate-500">{{ s.status }}</span>{% endif %}
+                        </td>
+                        <td class="py-2 font-mono text-xs text-slate-300">{% if s.verdict %}{{ s.verdict.score }}{% endif %}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="4" class="py-6 text-center text-slate-500 text-sm">No submissions yet.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+    {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  if (!window.Chart) return;
+  Chart.defaults.color = '#94a3b8';
+  Chart.defaults.borderColor = '#334155';
+  Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+
+  const labels   = {{ chart.labels|safe }};
+  const selected = {{ chart.selected|safe }};
+  const pct      = {{ chart.pct|safe }};
+  const approve  = {{ chart.approve|safe }};
+  const review   = {{ chart.review|safe }};
+  const deny     = {{ chart.deny|safe }};
+  const bandDatasets = {{ chart.band_datasets|safe }};
+  const bandLabels = {{ chart.band_labels|safe }};
+  const bandColors = {{ chart.band_colors|safe }};
+  const bandCounts = {{ chart.band_counts|safe }};
+
+  // --- RISK LINE CHART (for the selected band) ---
+  const riskEl = document.getElementById('chart-risk');
+  if (riskEl) new Chart(riskEl, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {label: 'Count', data: selected, borderColor: "{{ chart.selected_color }}", backgroundColor: "{{ chart.selected_color }}22", fill: true, tension: 0.35, yAxisID: 'y'},
+        {label: '% of Total', data: pct, borderColor: '#fb7185', borderDash: [3,3], tension: 0.35, fill: false, yAxisID: 'y1'},
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: {intersect: false, mode: 'index'},
+      scales: {
+        y:  {position: 'left', beginAtZero: true, ticks: {color: '#94a3b8'}, grid: {color: '#1e293b'}, title: {display: true, text: 'Count', color: '#94a3b8'}},
+        y1: {position: 'right', beginAtZero: true, max: 100, ticks: {color: '#94a3b8', callback: v => v + '%'}, grid: {display: false}, title: {display: true, text: '% over Threshold', color: '#94a3b8'}},
+        x:  {ticks: {color: '#94a3b8', maxRotation: 0, autoSkip: true, maxTicksLimit: 12}, grid: {color: '#1e293b'}},
+      },
+      plugins: {legend: {labels: {color: '#cbd5e1'}}},
+    },
+  });
+
+  // --- GAUGE DONUT (by band) ---
+  const gEl = document.getElementById('chart-gauge');
+  if (gEl) new Chart(gEl, {
+    type: 'doughnut',
+    data: {
+      labels: bandLabels,
+      datasets: [{
+        data: bandCounts,
+        backgroundColor: bandColors,
+        borderColor: '#0f172a', borderWidth: 2,
+      }],
+    },
+    options: {
+      cutout: '72%', rotation: -90, circumference: 180,
+      responsive: true, maintainAspectRatio: false,
+      plugins: {legend: {display: false}, tooltip: {enabled: true}},
+    },
+  });
+
+  // --- SMALL TIMING LINE (total submissions per day) ---
+  const tEl = document.getElementById('chart-timing');
+  if (tEl) new Chart(tEl, {
+    type: 'line',
+    data: {labels, datasets: [{data: approve.map((a,i) => a + review[i] + deny[i]), borderColor: '#2dd4bf', backgroundColor: 'rgba(45,212,191,0.18)', fill: true, tension: 0.45, pointRadius: 0}]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {x: {display: false}, y: {display: false, beginAtZero: true}},
+      plugins: {legend: {display: false}, tooltip: {enabled: false}},
+    },
+  });
+
+  // --- STACKED BAR (by band, colored from user-configured scoring bands) ---
+  const sEl = document.getElementById('chart-stacked');
+  if (sEl) new Chart(sEl, {
+    type: 'bar',
+    data: {labels, datasets: bandDatasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: {stacked: true, ticks: {color: '#94a3b8', maxRotation: 0, autoSkip: true, maxTicksLimit: 15}, grid: {display: false}},
+        y: {stacked: true, beginAtZero: true, ticks: {color: '#94a3b8'}, grid: {color: '#1e293b'}},
+      },
+      plugins: {legend: {labels: {color: '#cbd5e1'}}},
+    },
+  });
+})();
+</script>
+{% endblock %}

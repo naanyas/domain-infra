@@ -150,8 +150,17 @@ def _materialize_contact_entities(submission: Submission) -> None:
                 defaults={"handle": handle, "domain": domain},
             )
             if created:
-                from apps.entities.enrichers.email_local import enrich_contact_email
-                enrich_contact_email(obj)
+                # Local enricher (disposable/role/MX/gravatar) — free, no API.
+                from apps.entities.enrichers.email_local import enrich_contact_email as enrich_local
+                enrich_local(obj)
+                # IPQS email API (fraud_score, leaked, spam_trap, deliverability, ...).
+                # No-op if IPQS_API_KEY unset. Shares IPQS quota with proxy detection.
+                from apps.entities.enrichers.ipqs_email import enrich_contact_email as enrich_ipqs_email
+                enrich_ipqs_email(obj)
+                # SDAT scan on email's DOMAIN if not freemail and not the same as submitted.
+                # One-time ~20s cost per unique email on a scannable domain; cached after.
+                from apps.entities.enrichers.email_domain_scan import run_email_domain_scan
+                run_email_domain_scan(obj, skip_domain=submission.domain)
             submission.contact_email = obj
             updates.append("contact_email")
 
@@ -236,6 +245,155 @@ def _extract_analyzer_reasons(raw: dict) -> list[dict]:
     return reasons
 
 
+def _apply_ipqs_adjustments(submission: Submission, base_score: int) -> tuple[int, list[dict]]:
+    """
+    Translate IPQualityScore signals on the linked entities into score deductions.
+    Each signal that fires adds its weight to the SDAT score (higher = worse).
+    Kept separate from tag adjustments so investigators can see WHY the IPQS
+    enrichment moved the score in verdict.reasons.
+    """
+    delta = 0
+    reasons: list[dict] = []
+
+    # --- Submitter IP (IPQS Proxy Detection signals) ---
+    sip = submission.submitter_ip
+    if sip is not None:
+        if sip.fraud_score is not None and sip.fraud_score >= 85:
+            w = 40
+            delta += w
+            reasons.append({"code": "IPQS_IP_FRAUD_HIGH",
+                            "description": f"IPQS IP fraud score {sip.fraud_score}/100 (≥85 high risk)", "weight": w})
+        elif sip.fraud_score is not None and sip.fraud_score >= 75:
+            w = 20
+            delta += w
+            reasons.append({"code": "IPQS_IP_FRAUD_SUSPICIOUS",
+                            "description": f"IPQS IP fraud score {sip.fraud_score}/100 (≥75 suspicious)", "weight": w})
+        if sip.recent_abuse:
+            w = 30
+            delta += w
+            reasons.append({"code": "IPQS_IP_RECENT_ABUSE",
+                            "description": "IPQS flagged recent abuse events on this IP", "weight": w})
+        if sip.bot_status:
+            w = 40
+            delta += w
+            reasons.append({"code": "IPQS_IP_BOT",
+                            "description": "IPQS detected bot activity from this IP", "weight": w})
+        if sip.is_tor:
+            w = 60
+            delta += w
+            reasons.append({"code": "IP_TOR_EXIT", "description": "Submitter IP is a Tor exit node", "weight": w})
+        if sip.is_vpn:
+            w = 20
+            delta += w
+            reasons.append({"code": "IP_VPN", "description": "Submitter IP is a known VPN", "weight": w})
+        if sip.is_proxy:
+            w = 40
+            delta += w
+            reasons.append({"code": "IP_PROXY", "description": "Submitter IP is a proxy", "weight": w})
+
+    # --- Contact email (IPQS Email Validation signals) ---
+    ce = submission.contact_email
+    if ce is not None and ce.ipqs_enriched_at is not None:
+        if ce.ipqs_honeypot:
+            w = 60
+            delta += w
+            reasons.append({"code": "IPQS_EMAIL_HONEYPOT",
+                            "description": "Email is an IPQS honeypot / known spam trap", "weight": w})
+        if ce.ipqs_overall_score is not None:
+            if ce.ipqs_overall_score == 0:
+                w = 50
+                delta += w
+                reasons.append({"code": "IPQS_EMAIL_INVALID",
+                                "description": "IPQS overall_score 0 — invalid format / no DNS", "weight": w})
+            elif ce.ipqs_overall_score == 1:
+                w = 25
+                delta += w
+                reasons.append({"code": "IPQS_EMAIL_UNREACHABLE",
+                                "description": "IPQS overall_score 1 — DNS valid but SMTP unreachable", "weight": w})
+            elif ce.ipqs_overall_score == 2:
+                w = 15
+                delta += w
+                reasons.append({"code": "IPQS_EMAIL_TEMP_REJECT",
+                                "description": "IPQS overall_score 2 — temporary rejection error", "weight": w})
+        if (ce.ipqs_spam_trap_score or "").lower() == "high":
+            w = 50
+            delta += w
+            reasons.append({"code": "IPQS_EMAIL_SPAMTRAP_HIGH",
+                            "description": "IPQS spam-trap score HIGH — scrub from marketing lists", "weight": w})
+        if ce.ipqs_leaked:
+            w = 20
+            delta += w
+            reasons.append({"code": "IPQS_EMAIL_LEAKED",
+                            "description": "Email appears in leaked/breached data per IPQS", "weight": w})
+        if ce.ipqs_recent_abuse:
+            w = 30
+            delta += w
+            reasons.append({"code": "IPQS_EMAIL_RECENT_ABUSE",
+                            "description": "IPQS flagged recent abuse on this email", "weight": w})
+        if ce.ipqs_fraud_score is not None and ce.ipqs_fraud_score >= 85:
+            w = 40
+            delta += w
+            reasons.append({"code": "IPQS_EMAIL_FRAUD_HIGH",
+                            "description": f"IPQS email fraud score {ce.ipqs_fraud_score}/100 (≥85 high risk)", "weight": w})
+        if ce.ipqs_frequent_complainer:
+            w = 15
+            delta += w
+            reasons.append({"code": "IPQS_EMAIL_FREQUENT_COMPLAINER",
+                            "description": "IPQS tagged this email as a frequent complainer", "weight": w})
+
+    adjusted = max(0, min(100, base_score + delta))
+    return adjusted, reasons
+
+
+def _apply_tag_adjustments(submission: Submission, base_score: int) -> tuple[int, list[dict]]:
+    """
+    Apply investigator-set entity tags (good / bad / do_not_score) to the score.
+    Returns (adjusted_score, extra_reasons). Weights are intentionally asymmetric
+    favoring manual investigator judgment: a good-tagged submitter IP pulls the
+    score down hard, a bad-tagged entity pushes it up hard.
+    """
+    weights = {
+        "submitter_ip":   {"good": -50, "bad": +50},
+        "contact_email":  {"good": -40, "bad": +40},
+        "contact_phone":  {"good": -30, "bad": +30},
+        "contact_name":   {"good": -20, "bad": +20},
+    }
+    delta = 0
+    reasons: list[dict] = []
+    for attr, w in weights.items():
+        entity = getattr(submission, attr, None)
+        if entity is None or not entity.tag:
+            continue
+        if entity.tag == "good":
+            delta += w["good"]
+            reasons.append({"code": "TAGGED_GOOD", "description": f"{attr} tagged good: {entity}",
+                            "weight": w["good"]})
+        elif entity.tag == "bad":
+            delta += w["bad"]
+            reasons.append({"code": "TAGGED_BAD", "description": f"{attr} tagged bad: {entity}",
+                            "weight": w["bad"]})
+
+    # Domain-side entities — any linked IP / NS / MX / registrar tagged pushes score.
+    ds = getattr(submission, "domain_scan", None)
+    if ds is not None:
+        from apps.entities.models import IPAddress, MXHost, Nameserver, Registrar
+        for ip in IPAddress.objects.filter(scan_links__domain_scan=ds, tag__in=["good", "bad"]).distinct():
+            adj = -30 if ip.tag == "good" else +30
+            delta += adj
+            reasons.append({"code": f"TAGGED_{ip.tag.upper()}", "description": f"resolving IP tagged {ip.tag}: {ip.address}", "weight": adj})
+        for ns in Nameserver.objects.filter(scan_links__domain_scan=ds, tag__in=["good", "bad"]).distinct():
+            adj = -25 if ns.tag == "good" else +25
+            delta += adj
+            reasons.append({"code": f"TAGGED_{ns.tag.upper()}", "description": f"nameserver tagged {ns.tag}: {ns.hostname}", "weight": adj})
+        if ds.registrar_id and ds.registrar and ds.registrar.tag in ("good", "bad"):
+            adj = -25 if ds.registrar.tag == "good" else +25
+            delta += adj
+            reasons.append({"code": f"TAGGED_{ds.registrar.tag.upper()}", "description": f"registrar tagged {ds.registrar.tag}: {ds.registrar.name}", "weight": adj})
+
+    adjusted = max(0, min(100, base_score + delta))
+    return adjusted, reasons
+
+
 def _baseline_decision(domain_scan: DomainScan | None) -> tuple[str, int, str, list[dict]]:
     """Pre-rules decision from analyzer output alone."""
     if domain_scan is None:
@@ -317,6 +475,111 @@ def _build_signals(submission: Submission, domain_scan: DomainScan | None, netwo
 
 
 # ----------------------------------------------------------------------
+# Threat-intel detector — Cowork rollup and any other seeded known-threat domain.
+# ----------------------------------------------------------------------
+
+
+def _apply_threat_intel_adjustments(
+    submission: Submission, domain_scan, base_score: int
+) -> tuple[int, list[dict]]:
+    """
+    Check submission.domain, cross-link domains, and resolving hostnames against
+    ThreatIntelDomain. Each hit adds its score_weight to the baseline; returns the
+    final score + reason rows for the verdict.
+    """
+    from apps.iocs.detector import match_many
+
+    hosts: list[str] = []
+    if submission.domain:
+        hosts.append(submission.domain)
+    if submission.contact_email_raw and "@" in submission.contact_email_raw:
+        hosts.append(submission.contact_email_raw.split("@", 1)[1])
+    # Cross-link / external domains the SDAT scan surfaced on the page content.
+    if domain_scan and isinstance(domain_scan.raw_result, dict):
+        raw = domain_scan.raw_result
+        for key in ("content_external_link_domains",
+                    "content_cross_domain_email_domains",
+                    "content_external_script_domains"):
+            val = raw.get(key) or []
+            if isinstance(val, str):
+                # semicolon / comma separated
+                for part in val.replace(";", ",").split(","):
+                    part = part.strip()
+                    if part:
+                        hosts.append(part)
+            elif isinstance(val, (list, tuple)):
+                hosts.extend(str(v).strip() for v in val if v)
+
+    if not hosts:
+        return base_score, []
+
+    hits = match_many(hosts)
+    if not hits:
+        return base_score, []
+
+    score = base_score
+    reasons: list[dict] = []
+    for hit in hits:
+        score += hit["score"]
+        emoji = {"high": "🚨", "medium": "⚠️", "low": "·"}.get(hit["confidence"], "⚠️")
+        description = (
+            f"{emoji} Known threat — {hit['category']}/{hit['subcategory'] or 'general'}"
+            + (f" (brand: {hit['brand']})" if hit["brand"] and not hit["brand"].startswith(("generic", "unknown")) else "")
+            + f" — matched {hit['matched_host']} against {hit['domain']} "
+            f"[{hit['confidence']}, source: {hit['source']}]"
+        )
+        reasons.append({
+            "code": f"threat_intel_{hit['category']}",
+            "description": description,
+            "weight": hit["score"],
+            "kind": "threat_intel",
+            "detail": hit,
+        })
+
+    return min(score, 100), reasons
+
+
+# ----------------------------------------------------------------------
+# ML classifier — uses the gradient-boosted model trained on TrainingLabels.
+# ----------------------------------------------------------------------
+
+
+def _apply_ml_adjustment(submission, base_score: int) -> tuple[int, list[dict]]:
+    """
+    Pull a p(fraud) prediction from the persisted classifier and convert it to a
+    score adjustment. Silent pass-through if no model is trained yet. Records the
+    prediction on the verdict's reasons for explainability.
+    """
+    try:
+        from apps.feedback.ml import predict_fraud_probability, get_model_metadata
+        from apps.feedback.services import snapshot_features
+    except Exception:
+        return base_score, []
+
+    features = snapshot_features(submission)
+    p_bad = predict_fraud_probability(features)
+    if p_bad is None:
+        return base_score, []
+
+    # Map p(fraud) to an additive score adjustment in [-30, +30].
+    # p=0.5 is neutral; p=0 pulls score down (−30), p=1 pushes up (+30).
+    adjustment = int(round((p_bad - 0.5) * 60))
+    meta = get_model_metadata() or {}
+    description = (
+        f"🤖 ML classifier p(fraud)={p_bad:.2%} "
+        f"(model {meta.get('model_version', 'unknown')[:19]}, "
+        f"AUC {meta.get('auc')}). Score adjustment: {adjustment:+d}."
+    )
+    return base_score + adjustment, [{
+        "code": "ml_classifier",
+        "description": description,
+        "weight": adjustment,
+        "kind": "ml_inference",
+        "detail": {"p_fraud": round(p_bad, 4), "model_version": meta.get("model_version")},
+    }]
+
+
+# ----------------------------------------------------------------------
 # Pipeline
 # ----------------------------------------------------------------------
 
@@ -370,6 +633,43 @@ def process_submission(submission: Submission) -> Submission:
         baseline_decision, baseline_score, baseline_summary, baseline_reasons = _baseline_decision(
             domain_scan
         )
+
+        # Apply IPQS signal deductions first (remote enrichment — fraud score, proxy, tor, leaked, etc.)
+        baseline_score, ipqs_reasons = _apply_ipqs_adjustments(submission, baseline_score)
+        # Then investigator-set tags — tags should win ties against automated IPQS.
+        baseline_score, tag_reasons = _apply_tag_adjustments(submission, baseline_score)
+        # Threat-intel matches — Cowork rollup, any hostname on known-threat lists.
+        baseline_score, threat_reasons = _apply_threat_intel_adjustments(submission, domain_scan, baseline_score)
+        # ML classifier — consumes the feature snapshot and adds/subtracts up to ±30
+        # points based on p(fraud). Silent no-op if no model has been trained yet.
+        baseline_score, ml_reasons = _apply_ml_adjustment(submission, baseline_score)
+        baseline_reasons = baseline_reasons + ipqs_reasons + tag_reasons + threat_reasons + ml_reasons
+        # Re-evaluate decision if adjustments pushed us across a threshold.
+        adjustments_applied = bool(ipqs_reasons or tag_reasons or threat_reasons or ml_reasons)
+        if adjustments_applied:
+            if baseline_score >= 70:
+                baseline_decision = Verdict.DECISION_DENY
+            elif baseline_score <= 30:
+                baseline_decision = Verdict.DECISION_APPROVE
+            else:
+                baseline_decision = Verdict.DECISION_REVIEW
+
+            # Rewrite the summary header so it matches the FINAL decision+score.
+            # Previously we stored SDAT's original summary verbatim, which left
+            # "APPROVE (Score: 5)" visible even after IPQS pushed the decision to DENY.
+            decision_emoji = {
+                Verdict.DECISION_APPROVE: "✅",
+                Verdict.DECISION_DENY: "✗",
+                Verdict.DECISION_REVIEW: "◐",
+            }.get(baseline_decision, "")
+            adj_count = len(ipqs_reasons) + len(tag_reasons)
+            header = f"{decision_emoji} {baseline_decision.upper()} (Score: {baseline_score}/100) — {adj_count} IPQS/tag adjustment{'s' if adj_count != 1 else ''}"
+            remainder = ""
+            if baseline_summary and "|" in baseline_summary:
+                remainder = "|".join(baseline_summary.split("|")[1:]).strip()
+            elif baseline_summary:
+                remainder = baseline_summary.strip()
+            baseline_summary = f"{header} | {remainder}" if remainder else header
 
         # Load active risk profile + evaluate rules.
         from apps.risk_profiles.services import evaluate_rules

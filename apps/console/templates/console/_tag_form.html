@@ -1,0 +1,32 @@
+{% comment %}
+Inline tag form partial — include on any page that surfaces an entity.
+
+Required context:
+  * entity — a NetworkEntity subclass instance with {tag, tag_reason} fields
+  * tag_action_url — full URL to POST to (e.g. {% url 'console:entity-tag' 'email' email.id %})
+  * next_url — path to redirect back to after tagging (usually the current page)
+  * compact — truthy to render a small 1-row form; falsy for the full form
+{% endcomment %}
+<form method="POST" action="{{ tag_action_url }}" class="space-y-2 mt-3 pt-3 border-t border-slate-100">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next_url }}" />
+    {% if not compact %}
+    <input type="text" name="tag_reason" placeholder="Tag reason (e.g. 'verified my account', 'known botnet')"
+           value="{{ entity.tag_reason }}"
+           class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+    {% else %}
+    <input type="hidden" name="tag_reason" value="{{ entity.tag_reason }}" />
+    {% endif %}
+    <div class="flex gap-1">
+        <button name="tag" value="good" type="submit"
+                class="flex-1 px-2 py-1 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-700 text-white {% if entity.tag == 'good' %}ring-2 ring-emerald-900{% endif %}">GOOD</button>
+        <button name="tag" value="bad" type="submit"
+                class="flex-1 px-2 py-1 text-xs font-medium rounded bg-rose-600 hover:bg-rose-700 text-white {% if entity.tag == 'bad' %}ring-2 ring-rose-900{% endif %}">BAD</button>
+        <button name="tag" value="do_not_score" type="submit"
+                class="flex-1 px-2 py-1 text-xs font-medium rounded bg-slate-600 hover:bg-slate-700 text-white {% if entity.tag == 'do_not_score' %}ring-2 ring-slate-900{% endif %}">DNS</button>
+        {% if entity.tag %}
+        <button name="tag" value="" type="submit"
+                class="px-2 py-1 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50">Clear</button>
+        {% endif %}
+    </div>
+</form>

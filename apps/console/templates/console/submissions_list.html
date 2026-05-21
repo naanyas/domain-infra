@@ -1,0 +1,336 @@
+{% extends "console/base.html" %}
+{% block title %}Submissions · domain-infra{% endblock %}
+
+{% block main %}
+{# eHawk-style dark Data & Reporting layout — full-bleed dark wrapper. #}
+<div class="-m-8 bg-slate-900 min-h-full text-slate-100">
+
+{% if messages %}
+<div class="px-6 pt-4 space-y-2">
+{% for message in messages %}
+<div class="p-3 rounded-md border text-sm {% if message.tags == 'success' %}bg-emerald-900/40 border-emerald-700 text-emerald-100{% elif message.tags == 'error' %}bg-rose-900/40 border-rose-700 text-rose-100{% else %}bg-slate-800 border-slate-700 text-slate-100{% endif %}">{{ message }}</div>
+{% endfor %}
+</div>
+{% endif %}
+
+<div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+    <div>
+        <h1 class="text-lg font-semibold">Data and Reporting</h1>
+        <div class="text-[11px] text-slate-500 mt-0.5">keyboard: j/k move · x select · f flag · c confirm · d deny · a approve · / search</div>
+    </div>
+    <div class="flex items-center gap-2">
+        <a href="{% url 'console:submission-new' %}" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white rounded text-xs font-medium">+ New submission</a>
+    </div>
+</div>
+
+{# Top toolbar: search + date + filters + reports #}
+<div class="px-6 py-4 bg-slate-800/50 border-b border-slate-800">
+    <form method="GET" class="flex items-center gap-2 text-sm">
+        <select name="search_type" class="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-slate-200">
+            <option value="all">All</option>
+            <option value="domain">Domain</option>
+            <option value="email">Email</option>
+            <option value="ip">IP</option>
+            <option value="phone">Phone</option>
+            <option value="name">Name</option>
+            <option value="ref">Ref</option>
+        </select>
+        <div class="flex-1 relative">
+            <input name="q" value="{{ q }}" placeholder="Search…"
+                   class="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-100 placeholder:text-slate-500" />
+            {% if q %}<a href="?" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">×</a>{% endif %}
+        </div>
+        <select name="window" class="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-slate-200">
+            <option value="30">📅 Last 30 Days</option>
+            <option value="7">📅 Last 7 Days</option>
+            <option value="1">📅 Today</option>
+            <option value="all">📅 All time</option>
+        </select>
+        <select name="review" onchange="this.form.submit()" class="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-slate-200">
+            <option value="">All reviews</option>
+            <option value="unreviewed" {% if review == 'unreviewed' %}selected{% endif %}>📋 Unreviewed ({{ review_counts.unreviewed }})</option>
+            <option value="confirmed" {% if review == 'confirmed' %}selected{% endif %}>✓ Confirmed ({{ review_counts.confirmed }})</option>
+            <option value="corrected" {% if review == 'corrected' %}selected{% endif %}>↻ Corrected ({{ review_counts.corrected }})</option>
+            <option value="unknown" {% if review == 'unknown' %}selected{% endif %}>? Unknown ({{ review_counts.unknown }})</option>
+        </select>
+        <select name="decision" onchange="this.form.submit()" class="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-slate-200">
+            <option value="">Any decision</option>
+            <option value="approve" {% if decision == 'approve' %}selected{% endif %}>approve</option>
+            <option value="review"  {% if decision == 'review'  %}selected{% endif %}>review</option>
+            <option value="deny"    {% if decision == 'deny'    %}selected{% endif %}>deny</option>
+        </select>
+        <select name="status" onchange="this.form.submit()" class="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-slate-200">
+            <option value="">Any status</option>
+            <option value="queued"   {% if status == 'queued'   %}selected{% endif %}>Queued</option>
+            <option value="complete" {% if status == 'complete' %}selected{% endif %}>Complete</option>
+            <option value="failed"   {% if status == 'failed'   %}selected{% endif %}>Failed</option>
+        </select>
+    </form>
+</div>
+
+{# Sub-bar: result count, view toggle, action buttons #}
+<div class="px-6 pt-4 pb-2 flex items-center justify-between text-sm">
+    <div class="text-slate-400 text-xs">
+        Showing {% if total_matched > 200 %}first 200 of {% endif %}{{ total_matched }} result{{ total_matched|pluralize }}.
+    </div>
+    <div class="flex items-center gap-2">
+        <div class="text-xs text-slate-400 mr-3">📋 List · 📊 Chart</div>
+        <a href="?export=csv{% if q %}&q={{ q }}{% endif %}{% if status %}&status={{ status }}{% endif %}{% if decision %}&decision={{ decision }}{% endif %}{% if review %}&review={{ review }}{% endif %}"
+           class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs border border-slate-700">⬇ Download CSV</a>
+        <button type="button" id="columns-menu-btn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs border border-slate-700 relative">▦ Columns</button>
+        <div id="columns-menu" class="hidden absolute mt-8 right-6 z-20 bg-slate-800 border border-slate-700 rounded shadow-lg p-3 text-xs w-56">
+            <div class="text-slate-400 uppercase tracking-wider text-[10px] mb-1">Show columns</div>
+            {# Column toggles wired up via JS + localStorage. #}
+        </div>
+    </div>
+</div>
+
+{# Batch-run panel — shown at the TOP whenever the filter is Queued or Failed. #}
+{% if status == "queued" or status == "failed" %}
+<div class="mx-6 mb-3 flex items-center gap-3 text-sm bg-indigo-950/50 border border-indigo-800 rounded-md px-4 py-3">
+    <div class="flex-1 text-indigo-100">
+        <strong>{{ total_matched }}</strong> submission{{ total_matched|pluralize }} match this filter. Run SDAT on the next batch (~25s per row).
+    </div>
+    <form method="POST" action="{% url 'console:submissions-run-batch' %}"
+          onsubmit="this.querySelector('button[type=submit]').disabled=true;this.querySelector('button[type=submit]').innerHTML='⏳ Running…'">
+        {% csrf_token %}
+        <input type="hidden" name="status" value="{{ status }}" />
+        <input type="hidden" name="decision" value="{{ decision }}" />
+        <input type="hidden" name="q" value="{{ q }}" />
+        <select name="limit" class="bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1 text-sm">
+            <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option>
+        </select>
+        <button type="submit" class="ml-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium">▶ Run batch</button>
+    </form>
+</div>
+{% endif %}
+
+{# Bulk-actions form outside the table so per-row forms aren't nested. #}
+<form method="POST" action="{% url 'console:submissions-bulk' %}" id="bulk-form">
+{% csrf_token %}
+<input type="hidden" name="next" value="{{ request.get_full_path }}" />
+<div id="bulk-bar" class="hidden sticky top-0 z-10 mx-6 mb-2 bg-indigo-700 text-white rounded px-4 py-2 flex items-center gap-3 text-sm shadow-lg">
+    <span id="bulk-count" class="font-semibold">0 selected</span>
+    <div class="flex-1"></div>
+    <button name="action" value="flag_threat" type="submit" onclick="return confirm('Flag all selected as known threat (+60 future score, tag user-specific entities bad)?')" class="px-3 py-1 bg-rose-600 hover:bg-rose-500 rounded font-medium">🛡 Flag as threat</button>
+    <button name="action" value="correct_deny" type="submit" class="px-3 py-1 bg-rose-700 hover:bg-rose-600 rounded">✗ Force deny</button>
+    <button name="action" value="correct_approve" type="submit" class="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded">✓ Force approve</button>
+    <button name="action" value="confirm" type="submit" class="px-3 py-1 bg-slate-600 hover:bg-slate-500 rounded">✓ Confirm verdict</button>
+    <button name="action" value="mark_unknown" type="submit" class="px-3 py-1 bg-slate-500 hover:bg-slate-400 rounded">? Unknown</button>
+    <button type="button" id="bulk-clear" class="ml-2 text-xs text-indigo-200 hover:text-white">clear</button>
+</div>
+</form>
+
+<div class="px-6 pb-6 overflow-x-auto">
+<table id="subs-table" class="w-full text-xs table-auto">
+    <thead class="text-[10px] uppercase text-slate-400 bg-slate-800">
+        <tr>
+            <th class="w-8 px-2 py-2"><input type="checkbox" id="check-all" title="Select all visible" form="bulk-form" /></th>
+            <th class="text-left px-3 py-2 col-ip">IP</th>
+            <th class="text-left px-3 py-2 col-email">Email</th>
+            <th class="text-left px-3 py-2 col-geo">Geo IP</th>
+            <th class="text-left px-3 py-2 col-domain">Domain</th>
+            <th class="text-left px-3 py-2 col-phone">Phone</th>
+            <th class="text-left px-3 py-2 col-name">Name</th>
+            <th class="text-left px-3 py-2 col-fp">Fingerprint</th>
+            <th class="text-left px-3 py-2 col-os">Fingerprint OS</th>
+            <th class="text-left px-3 py-2 col-ref">Lead Source</th>
+            <th class="text-left px-3 py-2 col-app">App Name</th>
+            <th class="text-left px-3 py-2 col-org">Org Name</th>
+            <th class="text-right px-3 py-2 col-score">Total Score</th>
+            <th class="text-left px-3 py-2 col-time">Timestamp</th>
+            <th class="text-right px-3 py-2 col-action"></th>
+        </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-800">
+    {% for s in submissions %}
+        <tr class="sub-row hover:bg-slate-800/60 text-slate-200 cursor-pointer"
+            data-id="{{ s.id }}"
+            data-detail-url="{% url 'console:submission-detail' s.id %}?back={{ request.get_full_path|urlencode }}"
+            onclick="if(event.target.tagName!=='INPUT'&&event.target.tagName!=='BUTTON'&&event.target.tagName!=='A')location.href=this.dataset.detailUrl">
+            <td class="px-2 py-2" onclick="event.stopPropagation()">
+                <input type="checkbox" name="ids" value="{{ s.id }}" class="row-check" form="bulk-form" />
+            </td>
+            <td class="px-3 py-2 font-mono col-ip break-all">{{ s.submitter_ip_raw|default:"—" }}</td>
+            <td class="px-3 py-2 col-email break-all">{{ s.contact_email_raw|default:"—" }}</td>
+            <td class="px-3 py-2 col-geo">
+                {% if s.geo_country %}<span class="text-slate-100">{{ s.geo_country }}</span>{% if s.geo_city %}<div class="text-slate-500 text-[10px]">{{ s.geo_city }}</div>{% endif %}{% else %}<span class="text-slate-500">—</span>{% endif %}
+            </td>
+            <td class="px-3 py-2 font-mono col-domain break-all">{{ s.domain|default:"—" }}</td>
+            <td class="px-3 py-2 font-mono col-phone">{{ s.contact_phone_raw|default:"—" }}</td>
+            <td class="px-3 py-2 col-name">{{ s.contact_name_raw|default:"—" }}</td>
+            <td class="px-3 py-2 font-mono text-[10px] col-fp break-all" title="{{ s.primary_fp_hash }}">{{ s.primary_fp_hash|slice:":24"|default:"—" }}{% if s.primary_fp_hash %}…{% endif %}</td>
+            <td class="px-3 py-2 col-os">
+                {% if s.ua_os or s.ua_browser %}
+                <div>{{ s.ua_os|default:"—" }}</div>
+                <div class="text-slate-500 text-[10px]">{{ s.ua_browser }}</div>
+                {% else %}<span class="text-slate-500">—</span>{% endif %}
+            </td>
+            <td class="px-3 py-2 font-mono text-[10px] col-ref break-all">{{ s.external_ref|default:"—"|truncatechars:28 }}</td>
+            <td class="px-3 py-2 col-app">{{ s.app_name|default:"—"|truncatechars:24 }}</td>
+            <td class="px-3 py-2 col-org">{{ s.org_name|default:"—"|truncatechars:20 }}</td>
+            <td class="px-3 py-2 text-right col-score">
+                {% if s.verdict %}
+                <span class="inline-block px-2 py-0.5 rounded font-mono font-semibold
+                    {% if s.verdict.score >= 70 %}bg-rose-600 text-white
+                    {% elif s.verdict.score >= 30 %}bg-amber-500 text-white
+                    {% else %}bg-emerald-600 text-white{% endif %}">{{ s.verdict.score }}</span>
+                {% else %}
+                <span class="text-slate-500">—</span>
+                {% endif %}
+            </td>
+            <td class="px-3 py-2 col-time text-slate-400 whitespace-nowrap">{{ s.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="px-3 py-2 text-right col-action" onclick="event.stopPropagation()">
+                {% if s.domain %}
+                <form method="POST" action="{% url 'console:threat-intel-add' %}" class="inline"
+                      onsubmit="return confirm('Flag {{ s.domain }} as confirmed fraud?\n\n• Adds domain to threat intel (+60 on future)\n• Tags THIS submission\\'s email / name / phone / submitter IP as bad\n• Skips shared infra (NS / MX / registrar / resolving IPs / ASN)');">
+                    {% csrf_token %}
+                    <input type="hidden" name="domain" value="{{ s.domain }}" />
+                    <input type="hidden" name="submission_id" value="{{ s.id }}" />
+                    <input type="hidden" name="category" value="scam" />
+                    <input type="hidden" name="confidence" value="high" />
+                    <input type="hidden" name="subcategory" value="community_reported" />
+                    <input type="hidden" name="notes" value="Flagged from submissions list" />
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}" />
+                    <button type="submit" class="px-2 py-0.5 text-[10px] rounded bg-rose-900/50 hover:bg-rose-800 text-rose-200 border border-rose-800" title="Flag as known threat">🛡</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="15" class="px-6 py-16 text-center text-slate-500">No submissions match.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+
+</div>{# /dark wrapper #}
+
+<script>
+(function () {
+  // ---------- Column chooser (localStorage-backed) ----------
+  const COLUMNS = [
+    {key: 'ip',     label: 'IP',             default: true},
+    {key: 'email',  label: 'Email',          default: true},
+    {key: 'geo',    label: 'Geo IP',         default: true},
+    {key: 'domain', label: 'Domain',         default: true},
+    {key: 'phone',  label: 'Phone',          default: true},
+    {key: 'name',   label: 'Name',           default: true},
+    {key: 'fp',     label: 'Fingerprint',    default: true},
+    {key: 'os',     label: 'Fingerprint OS', default: true},
+    {key: 'ref',    label: 'Lead Source',    default: true},
+    {key: 'app',    label: 'App Name',       default: true},
+    {key: 'org',    label: 'Org Name',       default: true},
+    {key: 'score',  label: 'Total Score',    default: true},
+    {key: 'time',   label: 'Timestamp',      default: true},
+  ];
+  const STORAGE_KEY = 'domain-infra.submissions_cols';
+  function loadCols() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
+  }
+  function saveCols(state) { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  const state = (() => {
+    const saved = loadCols();
+    const out = {};
+    COLUMNS.forEach(c => { out[c.key] = (c.key in saved) ? saved[c.key] : c.default; });
+    return out;
+  })();
+  function applyCols() {
+    COLUMNS.forEach(c => {
+      document.querySelectorAll('.col-' + c.key).forEach(el => {
+        el.classList.toggle('hidden', !state[c.key]);
+      });
+    });
+  }
+  // Render the column-chooser menu
+  const menu = document.getElementById('columns-menu');
+  menu.innerHTML = '<div class="text-slate-400 uppercase tracking-wider text-[10px] mb-2">Show columns</div>'
+    + COLUMNS.map(c => `
+      <label class="flex items-center gap-2 py-1 cursor-pointer hover:text-white">
+        <input type="checkbox" data-col="${c.key}" ${state[c.key] ? 'checked' : ''} />
+        <span>${c.label}</span>
+      </label>`).join('');
+  document.getElementById('columns-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.contains(e.target) && e.target.id !== 'columns-menu-btn') {
+      menu.classList.add('hidden');
+    }
+  });
+  menu.querySelectorAll('input[data-col]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      state[inp.dataset.col] = inp.checked;
+      saveCols(state);
+      applyCols();
+    });
+  });
+  applyCols();
+
+  // ---------- Bulk selection ----------
+  const bar = document.getElementById('bulk-bar');
+  const count = document.getElementById('bulk-count');
+  const checkAll = document.getElementById('check-all');
+  const checks = () => Array.from(document.querySelectorAll('.row-check'));
+  const rows = () => Array.from(document.querySelectorAll('.sub-row'));
+  function updateBar() {
+    const selected = checks().filter(c => c.checked);
+    count.textContent = `${selected.length} selected`;
+    bar.classList.toggle('hidden', selected.length === 0);
+    rows().forEach(r => {
+      const cb = r.querySelector('.row-check');
+      r.classList.toggle('bg-indigo-900/30', cb && cb.checked);
+    });
+  }
+  checks().forEach(c => c.addEventListener('change', updateBar));
+  if (checkAll) checkAll.addEventListener('change', () => {
+    checks().forEach(c => { c.checked = checkAll.checked; });
+    updateBar();
+  });
+  const clearBtn = document.getElementById('bulk-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    checks().forEach(c => c.checked = false);
+    if (checkAll) checkAll.checked = false;
+    updateBar();
+  });
+
+  // ---------- Keyboard shortcuts ----------
+  let cursor = -1;
+  function highlightCursor() {
+    rows().forEach((r, i) => {
+      r.classList.toggle('ring-2', i === cursor);
+      r.classList.toggle('ring-brand-500', i === cursor);
+    });
+    if (cursor >= 0 && rows()[cursor]) rows()[cursor].scrollIntoView({block: 'nearest'});
+  }
+  function submitBulk(action) {
+    const selected = checks().filter(c => c.checked);
+    if (selected.length === 0 && cursor >= 0) {
+      rows()[cursor].querySelector('.row-check').checked = true;
+      updateBar();
+    }
+    const btn = document.querySelector(`#bulk-bar button[value="${action}"]`);
+    if (btn) btn.click();
+  }
+  document.addEventListener('keydown', (e) => {
+    if (['INPUT','TEXTAREA','SELECT'].includes((e.target || {}).tagName)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const n = rows().length;
+    if (!n) return;
+    switch (e.key) {
+      case 'j': case 'ArrowDown': cursor = Math.min(cursor + 1, n - 1); highlightCursor(); e.preventDefault(); break;
+      case 'k': case 'ArrowUp':   cursor = Math.max(cursor - 1, 0); highlightCursor(); e.preventDefault(); break;
+      case 'Enter': if (cursor >= 0) { location.href = rows()[cursor].dataset.detailUrl; e.preventDefault(); } break;
+      case 'x': if (cursor >= 0) { const cb = rows()[cursor].querySelector('.row-check'); cb.checked = !cb.checked; updateBar(); e.preventDefault(); } break;
+      case 'f': if (confirm('Flag selected as known threat?')) submitBulk('flag_threat'); e.preventDefault(); break;
+      case 'd': submitBulk('correct_deny'); e.preventDefault(); break;
+      case 'a': submitBulk('correct_approve'); e.preventDefault(); break;
+      case 'c': submitBulk('confirm'); e.preventDefault(); break;
+      case 'u': submitBulk('mark_unknown'); e.preventDefault(); break;
+      case '/': const search = document.querySelector('input[name="q"]'); if (search) { search.focus(); search.select(); e.preventDefault(); } break;
+    }
+  });
+})();
+</script>
+{% endblock %}

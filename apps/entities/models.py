@@ -12,14 +12,32 @@ from django.db import models
 class NetworkEntity(models.Model):
     """Abstract base for cross-customer reputation-tracked entities.
 
-    Counters are denormalized for fast read paths; Phase 2 updates them
-    via signals/jobs when new verdicts land. Phase 1 leaves them at 0.
+    Reputation counters are denormalized for fast reads; Phase 2 updates them
+    via signals/jobs when new verdicts land.
+
+    Tag fields (Phase 3) let investigators manually mark entities as
+    good / bad / do_not_score — these override automated scoring in the
+    pipeline (see apps.api.services._apply_tag_adjustments).
     """
+
+    TAG_GOOD = "good"
+    TAG_BAD = "bad"
+    TAG_DO_NOT_SCORE = "do_not_score"
+    TAG_CHOICES = [
+        (TAG_GOOD, "Tagged good (strong approve pull)"),
+        (TAG_BAD, "Tagged bad (strong deny pull)"),
+        (TAG_DO_NOT_SCORE, "Do not score (neutral)"),
+    ]
 
     first_seen = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(auto_now=True)
     net_flagged_count = models.IntegerField(default=0)
     net_approved_count = models.IntegerField(default=0)
+
+    tag = models.CharField(max_length=20, choices=TAG_CHOICES, blank=True, default="", db_index=True)
+    tag_reason = models.TextField(blank=True, default="")
+    tagged_at = models.DateTimeField(null=True, blank=True)
+    tagged_by = models.CharField(max_length=200, blank=True, default="")
 
     class Meta:
         abstract = True
@@ -54,6 +72,12 @@ class IPAddress(NetworkEntity):
     is_vpn = models.BooleanField(default=False)
     is_proxy = models.BooleanField(default=False)
     is_tor = models.BooleanField(default=False)
+    # IPQS risk signals — fraud_score 0-100 (higher = more suspicious);
+    # recent_abuse + bot_status are null=True to distinguish "unknown" from "false".
+    fraud_score = models.IntegerField(null=True, blank=True)
+    recent_abuse = models.BooleanField(null=True, blank=True)
+    bot_status = models.BooleanField(null=True, blank=True)
+    timezone = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         db_table = "ip_addresses"
@@ -117,7 +141,7 @@ class ContactEmail(NetworkEntity):
     normalized = models.CharField(max_length=320, unique=True)
     handle = models.CharField(max_length=200)
     domain = models.CharField(max_length=253)
-    # Phase 2: email enrichment populates these.
+    # Local enricher populates these (free, no API).
     mx_reachable = models.BooleanField(null=True, blank=True)
     is_disposable = models.BooleanField(default=False)
     is_role_account = models.BooleanField(default=False)
@@ -125,6 +149,31 @@ class ContactEmail(NetworkEntity):
     first_breach_at = models.DateTimeField(null=True, blank=True)
     last_breach_at = models.DateTimeField(null=True, blank=True)
     has_gravatar = models.BooleanField(null=True, blank=True)
+    # IPQS Email Validation API — paid/rate-limited; populated by ipqs_email enricher.
+    ipqs_fraud_score = models.IntegerField(null=True, blank=True)
+    ipqs_smtp_score = models.IntegerField(null=True, blank=True)
+    ipqs_overall_score = models.IntegerField(null=True, blank=True)
+    ipqs_valid = models.BooleanField(null=True, blank=True)
+    ipqs_dns_valid = models.BooleanField(null=True, blank=True)
+    ipqs_deliverability = models.CharField(max_length=20, blank=True, default="")  # low/medium/high
+    ipqs_catch_all = models.BooleanField(null=True, blank=True)
+    ipqs_honeypot = models.BooleanField(null=True, blank=True)
+    ipqs_recent_abuse = models.BooleanField(null=True, blank=True)
+    ipqs_suspect = models.BooleanField(null=True, blank=True)
+    ipqs_leaked = models.BooleanField(null=True, blank=True)
+    ipqs_frequent_complainer = models.BooleanField(null=True, blank=True)
+    ipqs_spam_trap_score = models.CharField(max_length=20, blank=True, default="")
+    ipqs_domain_age_days = models.IntegerField(null=True, blank=True)
+    ipqs_suggested_domain = models.CharField(max_length=253, blank=True, default="")
+    # When IPQS first observed this email globally (distinct from our own first_seen).
+    ipqs_first_seen = models.DateTimeField(null=True, blank=True)
+    ipqs_enriched_at = models.DateTimeField(null=True, blank=True)
+    # SDAT analyzer run on the EMAIL'S OWN DOMAIN (not the submitted domain).
+    # Skipped for freemail providers (gmail/yahoo/...) since they're noise, and
+    # skipped when the email domain matches the submitted domain (already scanned).
+    email_domain_scan_raw = models.JSONField(null=True, blank=True)
+    email_domain_scan_at = models.DateTimeField(null=True, blank=True)
+    email_domain_scan_skipped_reason = models.CharField(max_length=30, blank=True, default="")
 
     class Meta:
         db_table = "contact_emails"
@@ -180,6 +229,11 @@ class SubmitterIP(NetworkEntity):
     is_vpn = models.BooleanField(default=False)
     is_proxy = models.BooleanField(default=False)
     is_tor = models.BooleanField(default=False)
+    # IPQS risk signals
+    fraud_score = models.IntegerField(null=True, blank=True)
+    recent_abuse = models.BooleanField(null=True, blank=True)
+    bot_status = models.BooleanField(null=True, blank=True)
+    timezone = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         db_table = "submitter_ips"

@@ -1,0 +1,173 @@
+{% extends "console/base.html" %}
+{% block title %}Search · domain-infra{% endblock %}
+
+{% block main %}
+<nav class="text-xs mb-3">
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">Dashboard</a>
+    <span class="text-slate-400 mx-2">/</span>
+    <span class="text-slate-500">Search</span>
+</nav>
+
+<form method="GET" class="mb-6">
+    <div class="flex gap-2">
+        <input name="q" value="{{ q }}" autofocus
+               placeholder="Search domain, IP, email, fingerprint hash, device fingerprint, phone, name, external ref…"
+               class="flex-1 px-4 py-2 rounded-md border border-slate-300 text-sm" />
+        <button class="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-sm">Search</button>
+    </div>
+    <div class="mt-1 text-xs text-slate-500">
+        Exact-match IPs, fingerprint hashes, and emails route directly to their detail pages. Substring searches group results by entity type below.
+    </div>
+</form>
+
+{% if not q %}
+<div class="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">
+    Enter a query to search.
+</div>
+{% elif total == 0 %}
+<div class="bg-amber-50 border border-amber-200 rounded-lg p-6 text-sm">
+    No matches for <strong class="font-mono">{{ q }}</strong>.
+</div>
+{% else %}
+<div class="text-xs text-slate-500 mb-3">{{ total }} match{{ total|pluralize:"es" }} for <strong class="font-mono text-slate-700">{{ q }}</strong></div>
+
+{% if results.submissions %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">📄 Submissions ({{ results.submissions|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="text-xs text-slate-500 uppercase bg-slate-50">
+                <tr>
+                    <th class="text-left px-4 py-2">When</th>
+                    <th class="text-left px-4 py-2">Domain / Email</th>
+                    <th class="text-left px-4 py-2">Submitter IP</th>
+                    <th class="text-left px-4 py-2">Verdict</th>
+                    <th class="text-left px-4 py-2">Score</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+            {% for s in results.submissions %}
+                <tr class="hover:bg-slate-50 cursor-pointer" onclick="location.href='{% url 'console:submission-detail' s.id %}'">
+                    <td class="px-4 py-2 text-xs text-slate-500 whitespace-nowrap">{{ s.created_at|date:"Y-m-d H:i" }}</td>
+                    <td class="px-4 py-2">
+                        <div class="font-mono text-xs">{{ s.domain|default:"—" }}</div>
+                        {% if s.contact_email_raw %}<div class="text-xs text-slate-500">{{ s.contact_email_raw }}</div>{% endif %}
+                    </td>
+                    <td class="px-4 py-2 font-mono text-xs">{{ s.submitter_ip_raw|default:"—" }}</td>
+                    <td class="px-4 py-2 text-xs">
+                        {% if s.verdict %}
+                            {% if s.verdict.effective_decision == 'approve' %}<span class="text-emerald-700">approve</span>
+                            {% elif s.verdict.effective_decision == 'deny' %}<span class="text-rose-700">deny</span>
+                            {% else %}<span class="text-amber-700">review</span>{% endif %}
+                        {% else %}<span class="text-slate-400">{{ s.status }}</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-2 font-mono text-xs">{% if s.verdict %}{{ s.verdict.score }}{% endif %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+{% if results.ips %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">🌐 IPs ({{ results.ips|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for ip in results.ips %}
+        <a href="{% url 'console:ip-detail' ip.address %}" class="flex items-center justify-between px-4 py-2 hover:bg-slate-50 text-sm">
+            <span class="font-mono">{{ ip.address }}{% if ip.country %} <span class="text-xs text-slate-500">· {{ ip.country }}</span>{% endif %}{% if ip.city %} <span class="text-xs text-slate-500">{{ ip.city }}</span>{% endif %}</span>
+            <span class="text-xs text-slate-500">
+                {% if ip.tag %}<span class="px-1.5 py-0.5 rounded text-[10px] {% if ip.tag == 'bad' %}bg-rose-50 text-rose-700{% elif ip.tag == 'good' %}bg-emerald-50 text-emerald-700{% else %}bg-slate-100{% endif %} mr-2">{{ ip.tag }}</span>{% endif %}
+                {{ ip.net_approved_count }} ✓ · {{ ip.net_flagged_count }} ✗
+            </span>
+        </a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if results.emails %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">📧 Emails ({{ results.emails|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for e in results.emails %}
+        <a href="{% url 'console:entity-detail' 'email' e.id %}" class="flex items-center justify-between px-4 py-2 hover:bg-slate-50 text-sm">
+            <span class="font-mono text-xs">{{ e.normalized }}</span>
+            <span class="text-xs text-slate-500">{% if e.tag %}<span class="px-1.5 py-0.5 rounded text-[10px] {% if e.tag == 'bad' %}bg-rose-50 text-rose-700{% elif e.tag == 'good' %}bg-emerald-50 text-emerald-700{% else %}bg-slate-100{% endif %}">{{ e.tag }}</span>{% endif %}</span>
+        </a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if results.names %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">👤 Names ({{ results.names|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for n in results.names %}
+        <a href="{% url 'console:entity-detail' 'name' n.id %}" class="block px-4 py-2 hover:bg-slate-50 text-sm">{{ n.normalized }}</a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if results.phones %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">☎️ Phones ({{ results.phones|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for p in results.phones %}
+        <a href="{% url 'console:entity-detail' 'phone' p.id %}" class="block px-4 py-2 hover:bg-slate-50 text-sm font-mono">{{ p.e164|default:p.raw }}</a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if results.nameservers %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">🛰 Nameservers ({{ results.nameservers|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for ns in results.nameservers %}
+        <a href="{% url 'console:entity-detail' 'nameserver' ns.id %}" class="block px-4 py-2 hover:bg-slate-50 text-sm font-mono">{{ ns.hostname }}</a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if results.mx_hosts %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">📮 MX hosts ({{ results.mx_hosts|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for m in results.mx_hosts %}
+        <a href="{% url 'console:entity-detail' 'mx-host' m.id %}" class="block px-4 py-2 hover:bg-slate-50 text-sm font-mono">{{ m.hostname }}</a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if results.registrars %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">🏢 Registrars ({{ results.registrars|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for r in results.registrars %}
+        <a href="{% url 'console:entity-detail' 'registrar' r.id %}" class="block px-4 py-2 hover:bg-slate-50 text-sm">{{ r.name }}</a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if results.fingerprints %}
+<section class="mb-6">
+    <h2 class="text-sm font-semibold mb-2">🧬 Fingerprints ({{ results.fingerprints|length }})</h2>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+    {% for fp in results.fingerprints %}
+        <a href="{% url 'console:fingerprint-detail' fp.fingerprint_hash %}" class="flex items-center justify-between px-4 py-2 hover:bg-slate-50 text-sm">
+            <span class="font-mono text-xs">{{ fp.fingerprint_hash|slice:":32" }}…</span>
+            <span class="text-xs text-slate-500">{{ fp.kind }}{% if fp.reputation %} · rep {{ fp.reputation.reputation_score|floatformat:2 }}{% endif %}</span>
+        </a>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

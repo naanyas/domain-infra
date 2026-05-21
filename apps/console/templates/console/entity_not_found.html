@@ -1,0 +1,9 @@
+{% extends "console/base.html" %}
+{% block main %}
+<div class="max-w-xl mt-16 mx-auto text-center">
+    <div class="text-6xl text-slate-300 mb-3">404</div>
+    <h1 class="text-xl font-semibold mb-2">{{ kind }} not found: <span class="font-mono">{{ key }}</span></h1>
+    <p class="text-sm text-slate-500 mb-6">This entity hasn't been observed in any submission yet.</p>
+    <a href="{% url 'console:home' %}" class="text-brand-600 hover:underline">← Back to dashboard</a>
+</div>
+{% endblock %}

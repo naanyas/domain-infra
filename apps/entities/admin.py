@@ -15,7 +15,8 @@ from .models import (
 
 
 class NetworkEntityAdmin(admin.ModelAdmin):
-    readonly_fields = ("first_seen", "last_seen", "net_flagged_count", "net_approved_count")
+    readonly_fields = ("first_seen", "last_seen", "net_flagged_count", "net_approved_count", "tagged_at")
+    list_filter = ("tag",)
 
 
 @admin.register(ASN)

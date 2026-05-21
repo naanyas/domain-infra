@@ -87,6 +87,28 @@ class FingerprintReputation(models.Model):
     reputation_score = models.FloatField(default=0.0)
     last_updated_at = models.DateTimeField(auto_now=True)
 
+    # Human cluster-verdict: an investigator has confirmed the whole cluster as
+    # good or bad. Treated as a hard override — pipeline applies a big score
+    # adjustment when a future submission matches a fingerprint with this set.
+    # Extended cluster-verdict taxonomy:
+    #   "good"        — legitimate multi-user cluster (positive feedback)
+    #   "bad"         — confirmed fraud cluster (tags entities bad)
+    #   "not_cluster" — dismissed; these weren't actually related (no action taken)
+    #   "same_user"   — same person across submissions (repeat activity, not a ring)
+    CLUSTER_VERDICT_CHOICES = [
+        ("", "—"),
+        ("good", "Good cluster"),
+        ("bad", "Bad cluster"),
+        ("not_cluster", "Not a cluster"),
+        ("same_user", "Same user"),
+        ("unknown", "Unknown — reviewed but unclear"),
+    ]
+    cluster_verdict = models.CharField(max_length=16, choices=CLUSTER_VERDICT_CHOICES, default="", blank=True)
+    cluster_verdict_at = models.DateTimeField(null=True, blank=True)
+    cluster_verdict_by = models.CharField(max_length=150, default="", blank=True)
+    cluster_verdict_reason = models.CharField(max_length=500, default="", blank=True)
+    cluster_verdict_size = models.IntegerField(default=0, help_text="Cluster size at the moment of marking")
+
     class Meta:
         db_table = "fingerprint_reputations"
 

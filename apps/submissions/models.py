@@ -259,7 +259,26 @@ class Verdict(models.Model):
     reasons = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # Optional human override — customers can layer a review workflow on top.
+    # Investigator review status — labels every decision for training feedback.
+    #   confirmed — investigator reviewed + agrees (positive training signal)
+    #   corrected — investigator disagrees (reviewed_decision holds their call)
+    #   unknown   — investigator looked but can't tell (skip in training)
+    #   ""        — not yet reviewed
+    REVIEW_CONFIRMED = "confirmed"
+    REVIEW_CORRECTED = "corrected"
+    REVIEW_UNKNOWN = "unknown"
+    REVIEW_CHOICES = [
+        (REVIEW_CONFIRMED, "Confirmed — investigator agrees"),
+        (REVIEW_CORRECTED, "Corrected — investigator disagrees"),
+        (REVIEW_UNKNOWN, "Unknown — investigator can't tell"),
+    ]
+    review_status = models.CharField(
+        max_length=20, choices=REVIEW_CHOICES, blank=True, default="", db_index=True
+    )
+
+    # Kept for backward compatibility + data capture. Populated only when
+    # review_status == 'corrected'. Pre-existing naming retained to avoid
+    # a rename migration on what's now fully live data.
     human_override_decision = models.CharField(
         max_length=20, choices=DECISION_CHOICES, blank=True, default=""
     )
@@ -272,7 +291,10 @@ class Verdict(models.Model):
 
     @property
     def effective_decision(self) -> str:
-        return self.human_override_decision or self.decision
+        """If investigator corrected, their decision wins. Confirmed/unknown → system decision stays."""
+        if self.review_status == self.REVIEW_CORRECTED and self.human_override_decision:
+            return self.human_override_decision
+        return self.decision
 
     def __str__(self) -> str:
         return f"{self.submission_id} => {self.effective_decision}"
