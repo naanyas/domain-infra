@@ -1,0 +1,229 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Domain Risk API · Live Demo · SDAT v2</title>
+  <meta name="description" content="Try the Domain Risk API live — paste a domain, get a fraud risk score with explainable signals. Built by Jenna Webb." />
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['ui-sans-serif','system-ui','-apple-system','Segoe UI','Roboto','sans-serif'] },
+          colors: {
+            ink: { 900:'#0b0d12', 800:'#11141b', 700:'#1a1f2b' },
+            accent: { DEFAULT:'#d97757', soft:'#e8a489' },
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    body{background:#0b0d12;color:#e6e8ee;-webkit-font-smoothing:antialiased}
+    ::selection{background:#d97757;color:#0b0d12}
+    .bg-grid{background-image:radial-gradient(rgba(255,255,255,.05) 1px,transparent 1px);background-size:24px 24px}
+  </style>
+</head>
+<body class="min-h-screen">
+  <!-- Hero -->
+  <section class="relative overflow-hidden">
+    <div aria-hidden class="pointer-events-none absolute -top-32 -right-32 h-[420px] w-[420px] rounded-full bg-gradient-to-br from-violet-500/30 via-sky-500/10 to-transparent blur-3xl"></div>
+    <div aria-hidden class="pointer-events-none absolute top-40 -left-32 h-[380px] w-[380px] rounded-full bg-gradient-to-br from-accent/25 via-rose-500/10 to-transparent blur-3xl"></div>
+    <div class="bg-grid absolute inset-0 opacity-50" aria-hidden></div>
+
+    <div class="relative mx-auto max-w-4xl px-6 pt-16 pb-10">
+      <a href="https://jennawebb.co" class="inline-flex items-center gap-2 text-sm text-white/50 hover:text-white">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        jennawebb.co
+      </a>
+
+      <div class="mt-6 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-300">
+        <span class="relative inline-flex h-2 w-2">
+          <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-60"></span>
+          <span class="relative inline-flex h-2 w-2 rounded-full bg-violet-400"></span>
+        </span>
+        Live demo · SDAT v2
+      </div>
+
+      <h1 class="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">
+        Domain Risk API
+      </h1>
+      <p class="mt-3 max-w-2xl text-lg text-white/70">
+        Paste a domain. The same engine that powers SDAT v2 will pull DNS, email-auth, TLS, threat-intel, and pattern signals, then score it. Six free scans per hour.
+      </p>
+
+      <!-- Scan form -->
+      <form method="post" class="mt-8 rounded-2xl border border-white/10 bg-ink-800/60 p-5 backdrop-blur">
+        {% csrf_token %}
+        <label for="domain" class="block text-xs uppercase tracking-widest text-white/40">Domain to scan</label>
+        <div class="mt-2 flex flex-col gap-3 sm:flex-row">
+          <input
+            id="domain"
+            name="domain"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="e.g. paypal.com"
+            value="{{ domain_input }}"
+            class="flex-1 rounded-xl border border-white/10 bg-ink-900/60 px-4 py-3 text-base text-white placeholder-white/30 focus:border-violet-500/60 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+            required
+          />
+          <button type="submit" class="rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold text-ink-900 transition hover:bg-violet-400">
+            Scan domain
+          </button>
+        </div>
+        {% if error %}
+          <p class="mt-3 text-sm text-rose-300">{{ error }}</p>
+        {% endif %}
+        <p class="mt-3 text-xs text-white/40">
+          Scans take ~5–10 seconds. We don't store the result — this demo only shows you what the analyzer returned.
+        </p>
+      </form>
+    </div>
+  </section>
+
+  {% if result %}
+    <!-- Results -->
+    <section class="border-t border-white/5">
+      <div class="mx-auto max-w-4xl px-6 py-10">
+        <div class="rounded-2xl border border-white/10 bg-ink-800/70 p-6 sm:p-8">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="text-xs uppercase tracking-widest text-white/40">Risk profile</p>
+              <h2 class="mt-1 text-2xl font-semibold text-white">{{ result.domain }}</h2>
+            </div>
+            {% with l=result.level %}
+            <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset
+              {% if l == 'high' %}bg-rose-500/15 text-rose-300 ring-rose-500/30
+              {% elif l == 'elevated' %}bg-amber-500/15 text-amber-300 ring-amber-500/30
+              {% elif l == 'low' %}bg-sky-500/15 text-sky-300 ring-sky-500/30
+              {% else %}bg-emerald-500/15 text-emerald-300 ring-emerald-500/30{% endif %}">
+              {{ l|title }} risk · {{ result.recommendation }}
+            </span>
+            {% endwith %}
+          </div>
+
+          <!-- Score bar -->
+          <div class="mt-5">
+            <div class="flex items-end justify-between">
+              <p class="text-xs uppercase tracking-widest text-white/40">Risk score</p>
+              <p class="text-3xl font-semibold text-white tabular-nums">
+                {{ result.score }}<span class="text-base text-white/40">/100</span>
+              </p>
+            </div>
+            <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/5">
+              {% with l=result.level %}
+              <div class="h-full rounded-full
+                {% if l == 'high' %}bg-rose-500
+                {% elif l == 'elevated' %}bg-amber-500
+                {% elif l == 'low' %}bg-sky-500
+                {% else %}bg-emerald-500{% endif %}"
+                style="width: {{ result.score }}%"></div>
+              {% endwith %}
+            </div>
+            <div class="mt-1 flex justify-between text-[10px] uppercase tracking-widest text-white/30">
+              <span>Clean</span><span>Low</span><span>Elevated</span><span>High</span>
+            </div>
+          </div>
+
+          <!-- Signals grid -->
+          <div class="mt-6">
+            <p class="text-xs uppercase tracking-widest text-white/40">Signal checks</p>
+            <ul class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {% for s in result.signals %}
+                <li class="flex items-start gap-2 rounded-lg bg-ink-900/60 px-3 py-2 ring-1 ring-white/5">
+                  {% if s.state == 'ok' %}
+                    <svg class="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
+                  {% else %}
+                    <svg class="mt-0.5 h-4 w-4 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 9v4"/><circle cx="12" cy="17" r=".5"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+                  {% endif %}
+                  <div class="min-w-0">
+                    <p class="text-sm text-white/85">{{ s.label }}</p>
+                    {% if s.detail %}<p class="text-xs text-white/45">{{ s.detail }}</p>{% endif %}
+                  </div>
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+
+          <!-- Summary chips -->
+          {% if result.summary_chips %}
+            <div class="mt-6">
+              <p class="text-xs uppercase tracking-widest text-white/40">Analyst summary</p>
+              <ul class="mt-2 flex flex-wrap gap-1.5">
+                {% for chip in result.summary_chips %}
+                  <li class="rounded-md bg-white/5 px-2.5 py-1 text-xs text-white/75 ring-1 ring-white/10">{{ chip }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+
+          <!-- Footnotes -->
+          <dl class="mt-6 grid grid-cols-1 gap-3 border-t border-white/5 pt-5 text-sm sm:grid-cols-3">
+            {% if result.ip_address %}
+            <div>
+              <dt class="text-xs uppercase tracking-widest text-white/40">Resolved IP</dt>
+              <dd class="mt-1 text-white/80 tabular-nums">{{ result.ip_address }}</dd>
+            </div>
+            {% endif %}
+            {% if result.ptr_record %}
+            <div>
+              <dt class="text-xs uppercase tracking-widest text-white/40">PTR</dt>
+              <dd class="mt-1 truncate text-white/80">{{ result.ptr_record }}</dd>
+            </div>
+            {% endif %}
+            <div>
+              <dt class="text-xs uppercase tracking-widest text-white/40">Blacklist hits</dt>
+              <dd class="mt-1 text-white/80 tabular-nums">{{ result.blacklist_count }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <p class="mt-4 text-xs text-white/40">
+          This is a demo path; no submission is stored. For programmatic access with multi-tenant API keys, see the
+          <a href="/admin/login/" class="underline-offset-4 hover:underline">authenticated console</a>.
+        </p>
+      </div>
+    </section>
+  {% endif %}
+
+  <!-- About the tool -->
+  <section class="border-t border-white/5">
+    <div class="mx-auto max-w-4xl px-6 py-16">
+      <p class="text-xs uppercase tracking-widest text-white/40">About this engine</p>
+      <h2 class="mt-2 text-2xl font-semibold">What does it actually check?</h2>
+      <p class="mt-3 text-white/70 leading-relaxed">
+        SDAT v2 is the successor to the Streamlit "Config Checker" prototype. The initial version of this engine was installed
+        into a prominent email provider's infrastructure for live onboarding-fraud detection. v2 wraps that proven analyzer in a
+        multi-tenant Django + Postgres API, with cross-customer fingerprint reputation and a community feedback loop on the way.
+      </p>
+      <ul class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <li class="rounded-xl bg-ink-800/60 p-4 ring-1 ring-white/5">
+          <h3 class="text-sm font-semibold text-violet-300">DNS &amp; email authentication</h3>
+          <p class="mt-1 text-sm text-white/65">SPF, DMARC, DKIM, MX, A, PTR. Reverse-DNS sanity check.</p>
+        </li>
+        <li class="rounded-xl bg-ink-800/60 p-4 ring-1 ring-white/5">
+          <h3 class="text-sm font-semibold text-sky-300">TLS &amp; web presence</h3>
+          <p class="mt-1 text-sm text-white/65">HTTPS validity, certificate status, redirect chains.</p>
+        </li>
+        <li class="rounded-xl bg-ink-800/60 p-4 ring-1 ring-white/5">
+          <h3 class="text-sm font-semibold text-rose-300">Threat intel &amp; reputation</h3>
+          <p class="mt-1 text-sm text-white/65">VirusTotal, multiple DNSBL/RBL feeds, hacklink keyword sweep.</p>
+        </li>
+        <li class="rounded-xl bg-ink-800/60 p-4 ring-1 ring-white/5">
+          <h3 class="text-sm font-semibold text-amber-300">Phishing &amp; impersonation</h3>
+          <p class="mt-1 text-sm text-white/65">Brand-spoofing, typosquatting, credential forms, known phishing-kit signatures.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="border-t border-white/5">
+    <div class="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 px-6 py-8 text-sm text-white/50">
+      <p>Built by <a class="hover:text-white" href="https://jennawebb.co">Jenna Webb</a></p>
+      <p>SDAT v2 · <span class="text-white/30">Django · Postgres · Railway</span></p>
+    </div>
+  </footer>
+</body>
+</html>
