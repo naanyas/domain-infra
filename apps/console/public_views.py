@@ -62,14 +62,28 @@ def _normalize_domain(raw: str) -> str:
     return s
 
 
-def _run_scan(domain: str) -> dict[str, Any]:
-    """Call the analyzer directly. No DB writes — this is a demo path."""
+# 15-minute cache per domain. Demo visitors trying the same domain twice
+# (e.g. recruiter sharing a link) get an instant second hit, and the analyzer
+# isn't hammered for nothing.
+ANALYZER_CACHE_TTL_S = 60 * 15
+
+
+def _run_scan(domain: str) -> tuple[dict[str, Any], bool]:
+    """Call the analyzer. Returns (raw_result, served_from_cache)."""
+    cache_key = f"public_demo_scan:{domain}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached, True
+
     # Lazy import keeps Django startup fast.
     from analyzer import analyze_domain
 
-    result = analyze_domain(domain, timeout=8.0)
+    # 6s timeout: tight enough that demo visitors don't wait long,
+    # loose enough that DNS + a couple of HTTP checks can complete.
+    result = analyze_domain(domain, timeout=6.0)
     raw = asdict(result) if hasattr(result, "__dataclass_fields__") else dict(result)
-    return raw
+    cache.set(cache_key, raw, ANALYZER_CACHE_TTL_S)
+    return raw, False
 
 
 def _summarize(raw: dict[str, Any]) -> dict[str, Any]:
@@ -168,8 +182,9 @@ def landing(request):
                 )
             else:
                 try:
-                    raw = _run_scan(domain)
+                    raw, from_cache = _run_scan(domain)
                     context["result"] = _summarize(raw)
+                    context["from_cache"] = from_cache
                     context["remaining"] = remaining
                 except Exception:
                     logger.exception("public demo scan failed for %s", domain)

@@ -54,7 +54,7 @@
       </p>
 
       <!-- Scan form -->
-      <form method="post" class="mt-8 rounded-2xl border border-white/10 bg-ink-800/60 p-5 backdrop-blur">
+      <form id="scan-form" method="post" class="mt-8 rounded-2xl border border-white/10 bg-ink-800/60 p-5 backdrop-blur">
         {% csrf_token %}
         <label for="domain" class="block text-xs uppercase tracking-widest text-white/40">Domain to scan</label>
         <div class="mt-2 flex flex-col gap-3 sm:flex-row">
@@ -66,20 +66,92 @@
             spellcheck="false"
             placeholder="e.g. paypal.com"
             value="{{ domain_input }}"
-            class="flex-1 rounded-xl border border-white/10 bg-ink-900/60 px-4 py-3 text-base text-white placeholder-white/30 focus:border-violet-500/60 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+            class="flex-1 rounded-xl border border-white/10 bg-ink-900/60 px-4 py-3 text-base text-white placeholder-white/30 focus:border-violet-500/60 focus:outline-none focus:ring-2 focus:ring-violet-500/30 disabled:opacity-50"
             required
           />
-          <button type="submit" class="rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold text-ink-900 transition hover:bg-violet-400">
-            Scan domain
+          <button id="scan-submit" type="submit" class="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold text-ink-900 transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-70">
+            <svg id="scan-spinner" class="hidden h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <span id="scan-button-label">Scan domain</span>
           </button>
         </div>
         {% if error %}
           <p class="mt-3 text-sm text-rose-300">{{ error }}</p>
         {% endif %}
         <p class="mt-3 text-xs text-white/40">
-          Scans take ~5–10 seconds. We don't store the result — this demo only shows you what the analyzer returned.
+          Scans take ~5–10 seconds the first time and are instant when cached. We don't store the result &mdash; this demo only shows you what the analyzer returned.
         </p>
+
+        <!-- Loading state, shown by JS on submit -->
+        <div id="scan-status" class="mt-4 hidden">
+          <div class="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4">
+            <div class="flex items-center gap-3">
+              <div class="relative h-3 w-3">
+                <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75"></span>
+                <span class="relative inline-flex h-3 w-3 rounded-full bg-violet-400"></span>
+              </div>
+              <p class="text-sm font-medium text-violet-200">
+                Submitted &mdash; <span id="scan-stage">running analyzer pipeline</span>
+              </p>
+            </div>
+            <ul id="scan-steps" class="mt-3 space-y-1 text-xs text-white/55">
+              <li data-step="0" class="flex items-center gap-2"><span class="opacity-40">○</span><span>DNS records (A, MX, NS, TXT)</span></li>
+              <li data-step="1" class="flex items-center gap-2"><span class="opacity-40">○</span><span>Email auth (SPF, DKIM, DMARC)</span></li>
+              <li data-step="2" class="flex items-center gap-2"><span class="opacity-40">○</span><span>TLS &amp; HTTP probes</span></li>
+              <li data-step="3" class="flex items-center gap-2"><span class="opacity-40">○</span><span>Blacklists &amp; threat intel</span></li>
+              <li data-step="4" class="flex items-center gap-2"><span class="opacity-40">○</span><span>Pattern &amp; phishing analysis</span></li>
+              <li data-step="5" class="flex items-center gap-2"><span class="opacity-40">○</span><span>Scoring &amp; recommendation</span></li>
+            </ul>
+            <div class="mt-3 h-1 w-full overflow-hidden rounded-full bg-white/10">
+              <div id="scan-progress" class="h-full w-0 rounded-full bg-violet-400 transition-all duration-300"></div>
+            </div>
+          </div>
+        </div>
       </form>
+
+      <script>
+        (function () {
+          var form = document.getElementById('scan-form');
+          var status = document.getElementById('scan-status');
+          var submit = document.getElementById('scan-submit');
+          var spinner = document.getElementById('scan-spinner');
+          var label = document.getElementById('scan-button-label');
+          var input = document.getElementById('domain');
+          var progress = document.getElementById('scan-progress');
+          var stage = document.getElementById('scan-stage');
+          var steps = document.querySelectorAll('#scan-steps li');
+          if (!form) return;
+
+          form.addEventListener('submit', function () {
+            // Show loading state
+            status.classList.remove('hidden');
+            submit.disabled = true;
+            input.disabled = true;
+            spinner.classList.remove('hidden');
+            label.textContent = 'Scanning…';
+
+            // Walk through steps to give the visitor something to watch
+            var stepCount = steps.length;
+            var stepDuration = 1200; // ms per step
+            steps.forEach(function (li, i) {
+              setTimeout(function () {
+                // Mark previous as done
+                if (i > 0) {
+                  var prev = steps[i - 1];
+                  prev.firstElementChild.textContent = '✓';
+                  prev.firstElementChild.classList.remove('opacity-40');
+                  prev.firstElementChild.classList.add('text-emerald-400', 'opacity-100');
+                }
+                // Light up current
+                li.firstElementChild.textContent = '●';
+                li.firstElementChild.classList.remove('opacity-40');
+                li.firstElementChild.classList.add('text-violet-300', 'opacity-100');
+                progress.style.width = ((i + 1) / stepCount * 100) + '%';
+                stage.textContent = li.lastElementChild.textContent.toLowerCase();
+              }, i * stepDuration);
+            });
+          });
+        })();
+      </script>
     </div>
   </section>
 
@@ -90,7 +162,15 @@
         <div class="rounded-2xl border border-white/10 bg-ink-800/70 p-6 sm:p-8">
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p class="text-xs uppercase tracking-widest text-white/40">Risk profile</p>
+              <div class="flex items-center gap-2">
+                <p class="text-xs uppercase tracking-widest text-white/40">Risk profile</p>
+                {% if from_cache %}
+                  <span class="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-500/30">
+                    <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+                    Cached · instant
+                  </span>
+                {% endif %}
+              </div>
               <h2 class="mt-1 text-2xl font-semibold text-white">{{ result.domain }}</h2>
             </div>
             {% with l=result.level %}
