@@ -27,6 +27,7 @@ import socket
 import ssl
 import hashlib
 import difflib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields, asdict
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List, Dict, Set
@@ -7867,9 +7868,34 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
         res.domain_pattern_risk = ""
         res.is_homoglyph_domain = False
         res.homoglyph_target = ""
-    
+
+    # ----------------------------------------------------------------
+    # PARALLEL LOOKUPS
+    # The next 10+ network calls (email auth, DNSBL, NS, SOA, DNSSEC)
+    # are mutually independent. Sequential they cost 5-8s; parallel
+    # they're bounded by the slowest single call (~1-2s).
+    # Each future is .result()'d at its original call site below, so
+    # the rest of analyze_domain stays sequential and ordering-stable.
+    # ----------------------------------------------------------------
+    _pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="analyzer-lookups")
+    _f_spf = _pool.submit(get_spf, domain)
+    _f_dkim = _pool.submit(check_dkim, domain)
+    _f_dmarc = _pool.submit(get_dmarc, domain)
+    _f_mx = _pool.submit(get_mx, domain)
+    _f_bimi = _pool.submit(get_bimi, domain)
+    _f_mta_sts = _pool.submit(get_mta_sts, domain)
+    _f_domain_bl = _pool.submit(check_domain_blacklists, domain, config['domain_blacklists'])
+    _f_ns = _pool.submit(dns_query, domain, 'NS')
+    _f_soa = _pool.submit(check_soa_freshness, domain)
+    _f_dnssec = _pool.submit(check_dnssec, domain)
+    # IP-blacklist check only when we actually resolved an IP and the
+    # domain isn't a mail-only / no-resolve special case.
+    _f_ip_bl = None
+    if res.resolved and res.ip_address and not res.is_mail_only_domain and not res.is_no_resolve_domain:
+        _f_ip_bl = _pool.submit(check_ip_blacklists, res.ip_address, config['ip_blacklists'])
+
     # SPF
-    spf_record, spf_exists, spf_parsed = get_spf(domain)
+    spf_record, spf_exists, spf_parsed = _f_spf.result()
     res.spf_record = spf_record[:500]
     res.spf_exists = spf_exists
     if spf_exists:
@@ -7896,11 +7922,11 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
         )
     
     # DKIM
-    res.dkim_exists, dkim_selectors = check_dkim(domain)
+    res.dkim_exists, dkim_selectors = _f_dkim.result()
     res.dkim_selectors_found = ";".join(dkim_selectors)
-    
+
     # DMARC
-    dmarc_record, dmarc_exists, dmarc_parsed = get_dmarc(domain)
+    dmarc_record, dmarc_exists, dmarc_parsed = _f_dmarc.result()
     res.dmarc_record = dmarc_record[:500]
     res.dmarc_exists = dmarc_exists
     if dmarc_exists:
@@ -7909,7 +7935,7 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
         res.dmarc_rua = dmarc_parsed.get("rua", "")
     
     # MX
-    res.mx_exists, mx_records, res.mx_is_null = get_mx(domain)
+    res.mx_exists, mx_records, res.mx_is_null = _f_mx.result()
     if mx_records:
         res.mx_records = ";".join([f"{p}:{h}" for p, h in mx_records])
         res.mx_primary = mx_records[0][1] if mx_records else ""
@@ -7939,26 +7965,26 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
         res.mx_hijack_confidence = mx_hijack["confidence"]
     
     # BIMI
-    res.bimi_exists, res.bimi_record = get_bimi(domain)
-    
+    res.bimi_exists, res.bimi_record = _f_bimi.result()
+
     # MTA-STS
-    res.mta_sts_exists, res.mta_sts_record = get_mta_sts(domain)
-    
+    res.mta_sts_exists, res.mta_sts_record = _f_mta_sts.result()
+
     # Blacklists (v6.2: now tracks inconclusive checks)
-    bl_hits, bl_count, bl_inconclusive = check_domain_blacklists(domain, config['domain_blacklists'])
+    bl_hits, bl_count, bl_inconclusive = _f_domain_bl.result()
     res.domain_blacklists_hit = ";".join(bl_hits)
     res.domain_blacklist_count = bl_count
     res.domain_blacklist_inconclusive = bl_inconclusive
-    
+
     # IP blacklists and hosting detection require an IP address — skip for mail-only and no-resolve domains
-    if not res.is_mail_only_domain and not res.is_no_resolve_domain:
-        ip_bl_hits, ip_bl_count, ip_bl_inconclusive = check_ip_blacklists(res.ip_address, config['ip_blacklists'])
+    if not res.is_mail_only_domain and not res.is_no_resolve_domain and _f_ip_bl is not None:
+        ip_bl_hits, ip_bl_count, ip_bl_inconclusive = _f_ip_bl.result()
         res.ip_blacklists_hit = ";".join(ip_bl_hits)
         res.ip_blacklist_count = ip_bl_count
         res.ip_blacklist_inconclusive = ip_bl_inconclusive
 
     # Hosting Provider Detection
-    ns_records = dns_query(domain, 'NS')
+    ns_records = _f_ns.result()
     if not res.is_mail_only_domain and not res.is_no_resolve_domain:
         hosting_result = check_hosting_provider(
             domain, res.ip_address,
@@ -8038,7 +8064,7 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
     res.ns_enterprise_match = ns_risk.get("enterprise_ns_match", "")
 
     # v8.1: SOA freshness check (DNS-only, runs for all domains)
-    soa = check_soa_freshness(domain)
+    soa = _f_soa.result()
     res.soa_exists = soa["soa_exists"]
     res.soa_serial = soa["soa_serial"]
     res.soa_serial_is_date = soa["soa_serial_is_date"]
@@ -8046,7 +8072,10 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
     res.soa_days_since_serial = soa["soa_days_since_serial"]
 
     # v8.1: DNSSEC check (DNS-only, runs for all domains)
-    res.dnssec_enabled = check_dnssec(domain)
+    res.dnssec_enabled = _f_dnssec.result()
+
+    # All parallel lookups consumed — release the pool's threads.
+    _pool.shutdown(wait=False)
 
     # === WEB CHECKS (TLS, HTTP, content, hacklink, etc.) ===
     # Mail-only and no-resolve domains have no A record / website — skip all web-dependent checks.
