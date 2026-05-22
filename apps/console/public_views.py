@@ -81,9 +81,11 @@ def _run_scan(domain: str) -> tuple[dict[str, Any], bool]:
     # Lazy import keeps Django startup fast.
     from analyzer import analyze_domain
 
-    # 6s timeout: tight enough that demo visitors don't wait long,
-    # loose enough that DNS + a couple of HTTP checks can complete.
-    result = analyze_domain(domain, timeout=6.0)
+    # Demo-mode tunings:
+    # - check_rdap=False saves 1-3s of registrar lookups the demo doesn't surface anyway.
+    # - timeout=4.0 caps per-call HTTP latency; the analyzer doesn't surface partial
+    #   timeouts as fatal so this only sacrifices completeness on the slowest sites.
+    result = analyze_domain(domain, timeout=4.0, check_rdap=False)
     raw = asdict(result) if hasattr(result, "__dataclass_fields__") else dict(result)
     cache.set(cache_key, raw, ANALYZER_CACHE_TTL_S)
     return raw, False

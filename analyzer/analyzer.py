@@ -7877,7 +7877,7 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
     # Each future is .result()'d at its original call site below, so
     # the rest of analyze_domain stays sequential and ordering-stable.
     # ----------------------------------------------------------------
-    _pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="analyzer-lookups")
+    _pool = ThreadPoolExecutor(max_workers=14, thread_name_prefix="analyzer-lookups")
     _f_spf = _pool.submit(get_spf, domain)
     _f_dkim = _pool.submit(check_dkim, domain)
     _f_dmarc = _pool.submit(get_dmarc, domain)
@@ -7893,6 +7893,27 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
     _f_ip_bl = None
     if res.resolved and res.ip_address and not res.is_mail_only_domain and not res.is_no_resolve_domain:
         _f_ip_bl = _pool.submit(check_ip_blacklists, res.ip_address, config['ip_blacklists'])
+
+    # HTTP/HTTPS probes — the single slowest network operations in the analyzer.
+    # They were originally sequential, downstream of the DNS section. Now they
+    # run alongside DNS, so the wall-clock cost of the web checks effectively
+    # collapses into the DNS time. Read .result() at the original use sites.
+    _f_http_head = None
+    _f_https_fetch = None
+    _f_tls = None
+    if not res.is_mail_only_domain and not res.is_no_resolve_domain:
+        if REQUESTS_AVAILABLE:
+            def _http_head():
+                try:
+                    return requests.head(
+                        f"http://{domain}",
+                        timeout=timeout, allow_redirects=False, verify=False,
+                    )
+                except Exception:
+                    return None
+            _f_http_head = _pool.submit(_http_head)
+        _f_https_fetch = _pool.submit(follow_redirects, f"https://{domain}", timeout, True)
+        _f_tls = _pool.submit(check_tls, domain, timeout)
 
     # SPF
     spf_record, spf_exists, spf_parsed = _f_spf.result()
@@ -8083,7 +8104,7 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
     content = None  # Initialize for mail-only/no-resolve path (used by later sections)
     if not res.is_mail_only_domain and not res.is_no_resolve_domain:
         # TLS — v4.4: now captures handshake_failed and connection_failed separately
-        tls = check_tls(domain, timeout)
+        tls = _f_tls.result() if _f_tls is not None else check_tls(domain, timeout)
         res.https_valid = tls["ok"]
         res.tls_error = tls["error"]
         res.tls_handshake_failed = tls["handshake_failed"]       # v4.4
@@ -8092,17 +8113,15 @@ def analyze_domain(domain: str, timeout: float = 10.0, check_rdap: bool = True,
         res.cert_expired = tls["expired"]
         res.cert_wrong_host = tls["wrong_host"]
         
-        # HTTP check
-        if REQUESTS_AVAILABLE:
-            try:
-                r = requests.head(f"http://{domain}", timeout=timeout, allow_redirects=False, verify=False)
+        # HTTP check (consumes the future submitted up-front)
+        if REQUESTS_AVAILABLE and _f_http_head is not None:
+            r = _f_http_head.result()
+            if r is not None:
                 res.http_reachable = r.status_code in [200, 301, 302, 307, 308]
                 res.http_status = r.status_code
-            except:
-                pass
-        
-        # HTTPS with redirects + content
-        https_result = follow_redirects(f"https://{domain}", timeout, fetch_content=True)
+
+        # HTTPS with redirects + content (consumes the future submitted up-front)
+        https_result = _f_https_fetch.result() if _f_https_fetch is not None else follow_redirects(f"https://{domain}", timeout, fetch_content=True)
         res.https_reachable = https_result["ok"]
         res.https_status = https_result["initial_status"]
         res.redirect_count = https_result["hops"]
