@@ -77,6 +77,15 @@
         {% if error %}
           <p class="mt-3 text-sm text-rose-300">{{ error }}</p>
         {% endif %}
+        {% if result %}
+          <a href="#result-section" class="mt-3 flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-300 transition hover:bg-emerald-500/20">
+            <span class="flex items-center gap-2">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
+              Scan complete for <strong class="text-white">{{ result.domain }}</strong> &mdash; {{ result.recommendation }} ({{ result.level|title }} risk · {{ result.score }}/100)
+            </span>
+            <span class="text-xs">View details &darr;</span>
+          </a>
+        {% endif %}
         <p class="mt-3 text-xs text-white/40">
           Scans take ~5–10 seconds the first time and are instant when cached. We don't store the result &mdash; this demo only shows you what the analyzer returned.
         </p>
@@ -122,10 +131,16 @@
           if (!form) return;
 
           form.addEventListener('submit', function () {
-            // Show loading state
+            // Show loading state. NEVER use input.disabled=true or
+            // submit.disabled=true synchronously here — in WebKit / Blink,
+            // disabling form controls inside a submit handler excludes them
+            // from the form data, so the POST arrives without the domain.
+            // readOnly + aria-disabled gives the same visual feedback
+            // without breaking the request.
             status.classList.remove('hidden');
-            submit.disabled = true;
-            input.disabled = true;
+            input.readOnly = true;
+            submit.setAttribute('aria-disabled', 'true');
+            submit.classList.add('pointer-events-none', 'opacity-70');
             spinner.classList.remove('hidden');
             label.textContent = 'Scanning…';
 

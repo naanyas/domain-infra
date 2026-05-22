@@ -195,4 +195,11 @@ def landing(request):
                         "The scan failed. Try a different domain or come back in a minute."
                     )
 
-    return render(request, "console/public_landing.html", context)
+    response = render(request, "console/public_landing.html", context)
+    # Never let the demo page sit in a browser/CDN cache. Stale HTML here
+    # is what makes "I submitted but nothing happened" look like a bug —
+    # the browser was actually painting yesterday's HTML.
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
