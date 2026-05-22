@@ -26,19 +26,31 @@
   </style>
 </head>
 <body class="min-h-screen">
+  <!-- Top nav -->
+  <nav class="sticky top-0 z-40 border-b border-white/5 bg-ink-900/80 backdrop-blur-md">
+    <div class="mx-auto flex max-w-4xl items-center justify-between gap-4 px-6 py-3">
+      <a href="https://jennawebb.co" class="flex items-center gap-2 text-sm font-semibold text-white">
+        <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-ink-900">JW</span>
+        <span class="hidden sm:inline">jennawebb.co</span>
+      </a>
+      <div class="hidden items-center gap-1 text-sm text-white/70 md:flex">
+        <a href="https://jennawebb.co#projects" class="rounded-md px-3 py-1.5 hover:bg-white/5 hover:text-white">All projects</a>
+        <span class="mx-1 h-4 w-px bg-white/10"></span>
+        <span class="rounded-md bg-violet-500/10 px-3 py-1.5 text-violet-300 ring-1 ring-violet-500/30">SDAT demo</span>
+        <a href="https://momentum-screener-production-1255.up.railway.app/" class="rounded-md px-3 py-1.5 hover:bg-white/5 hover:text-white">V9 screener</a>
+      </div>
+      <a href="https://jennawebb.co#contact" class="rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-white/15 transition hover:bg-white/15">Contact</a>
+    </div>
+  </nav>
+
   <!-- Hero -->
   <section class="relative overflow-hidden">
     <div aria-hidden class="pointer-events-none absolute -top-32 -right-32 h-[420px] w-[420px] rounded-full bg-gradient-to-br from-violet-500/30 via-sky-500/10 to-transparent blur-3xl"></div>
     <div aria-hidden class="pointer-events-none absolute top-40 -left-32 h-[380px] w-[380px] rounded-full bg-gradient-to-br from-accent/25 via-rose-500/10 to-transparent blur-3xl"></div>
     <div class="bg-grid absolute inset-0 opacity-50" aria-hidden></div>
 
-    <div class="relative mx-auto max-w-4xl px-6 pt-16 pb-10">
-      <a href="https://jennawebb.co" class="inline-flex items-center gap-2 text-sm text-white/50 hover:text-white">
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
-        jennawebb.co
-      </a>
-
-      <div class="mt-6 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-300">
+    <div class="relative mx-auto max-w-4xl px-6 pt-12 pb-10">
+      <div class="mt-2 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-300">
         <span class="relative inline-flex h-2 w-2">
           <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-60"></span>
           <span class="relative inline-flex h-2 w-2 rounded-full bg-violet-400"></span>
