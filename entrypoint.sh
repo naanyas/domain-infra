@@ -4,6 +4,10 @@ set -euo pipefail
 echo "[entrypoint] applying migrations..."
 python manage.py migrate --noinput
 
+# Create the cache table if it doesn't exist (DatabaseCache backend).
+# Idempotent — Django emits a "Cache table 'django_cache' already exists." on subsequent boots.
+python manage.py createcachetable 2>&1 || echo "[entrypoint] createcachetable failed (likely already exists); continuing"
+
 # Idempotent superuser bootstrap. Only acts on first deploy when the user
 # doesn't exist; subsequent deploys skip silently. Driven by env vars:
 #   DJANGO_SUPERUSER_USERNAME, DJANGO_SUPERUSER_EMAIL, DJANGO_SUPERUSER_PASSWORD

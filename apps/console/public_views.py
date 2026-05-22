@@ -27,10 +27,11 @@ logger = logging.getLogger(__name__)
 
 DOMAIN_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$")
 
-# Rate-limit: 6 scans per IP per hour. Generous for casual exploration, tight
-# enough that this doesn't become a free analyzer-as-a-service.
+# Rate-limit: 30 scans per IP per hour. Generous enough for active demoing
+# (recruiters poking at it, the maker iterating), tight enough that this
+# doesn't become a free analyzer-as-a-service.
 RATE_LIMIT_WINDOW_S = 60 * 60
-RATE_LIMIT_PER_WINDOW = 6
+RATE_LIMIT_PER_WINDOW = 30
 
 
 def _client_ip(request) -> str:
@@ -58,7 +59,9 @@ def _normalize_domain(raw: str) -> str:
     # Strip scheme + path so users can paste a URL
     s = re.sub(r"^https?://", "", s)
     s = s.split("/")[0]
-    s = s.lstrip("www.")
+    # Use removeprefix — lstrip("www.") strips any of {w, .}, which can
+    # silently mangle inputs that just happen to start with those chars.
+    s = s.removeprefix("www.")
     return s
 
 

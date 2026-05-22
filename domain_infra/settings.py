@@ -154,3 +154,15 @@ REST_FRAMEWORK = {
 # Submission synchronous mode cap (seconds) — how long POST /submissions?wait=true
 # will block before returning a pending response with a submission_id to poll.
 SUBMISSION_SYNC_TIMEOUT_SECONDS = 60
+
+# Database-backed cache. The public demo's per-domain analyzer cache
+# needs to be shared across Gunicorn workers — in-memory cache would
+# give every worker its own dict and visitors would see inconsistent
+# "cached" status. Postgres is already there, so this rides on it.
+# Table created by `createcachetable` in entrypoint.sh.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+    }
+}
